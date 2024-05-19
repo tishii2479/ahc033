@@ -112,3 +112,168 @@
             - 搬出できるようになった時に到達可能か判定
     - 設置位置の衝突
 - 並列なので、順番が前後しても頑健であってほしい
+- クレーン0だけを使った解法を提出
+    - 順位表を見ると絶対スコアは1/6倍程度にする必要がある
+    - 60~70ターンくらいが目標、高々100ターンくらい
+    - ビーム撃つことになりそう
+
+## どうやってクレーンを複数動かすか
+
+- ジョブを割り当てる
+    - 行動は以下の3種類だが
+        - 搬入する
+        - 搬出する
+        - 搬入と搬出をする
+    - 全て、以下の一連の流れ
+        - 拾いに行く
+        - 拾う
+        - 運ぶ
+        - 降ろす
+    - 最大ターン数が短いので、行動は1ターンずつで良さそう
+    - 最適かというと、、
+- 考えること
+    - 衝突しないようにするには
+    - 回避不可能な場合は？
+
+- 最初は貪欲で良い
+
+```rust
+struct Task {
+    from: (usize, usize),
+    to: (usize, usize),
+}
+```
+
+1. 新たに発生したタスクを列挙する
+2. タスクがないクレーンにタスクを割り当てる
+3. 各クレーンについて、以下の操作を順に行う
+    1. 目的地にいれば、拾う・降ろす操作を行う
+    2. いなければ、目的地に近づくような操作のうち、実行可能な操作を列挙する
+        - 実行可能 := 次のターンにクレーンが存在しないマス、クレーンと交差しないマス
+    3. 2.で列挙した操作からランダムに一つ選択し、実行する
+        - 選べない場合はその場に留まる
+4. 1.に戻る
+
+- スタック対策
+    - 片方が譲る
+- 同時に同じ搬出口に運ぶには？
+- 時刻t+dに通れなくなっていたら？
+- ちゃんと最適化するには、各時刻の状態を記録する必要があるか
+    - スタック対策にもなる
+
+```rust
+/// terminal[t][i][j] := 時刻tのマス(i, j)の状態
+terminal: Vec<Vec<Vec<TileStatus>>>;
+
+fn get_move_for_task(
+    terminal: &Vec<Vec<Vec<TileStatus>>>,
+    t: usize,
+    from: (usize, usize),
+    to: (usize, usize),
+    task: Task,
+) -> Vec<Move> {
+    let mut dp = vec![vec![vec![false; N]; N]; T];
+}
+```
+
+### 考察
+
+- クレーンで持った状態になると、仮置きする必要はなくなる
+- 待機が勿体無いので
+    - 搬入口は同時に複数利用したい
+    - なるべく最後は複数の搬出口に搬出していたい
+    - 順序の評価関数を変えればどうにかなるか？
+- おそらく方針では差がつかず、各要素の最適化精度で決まる問題な気がする
+- 一個前の搬出が完了する時刻が判明したら、次の搬出もキューに入れたい
+
+- 経路やクレーンの衝突を無視して（緩めて）最適化？
+- クレーンの経路をどれくらい後から求められるか
+
+```rust
+struct Task {
+    ij: (usize, usize),
+    from: (usize, usize),
+    to: (usize, usize),
+}
+tasks[i] := クレーンiのタスクの順序
+
+// 近傍
+move(tasks[i1][j1], tasks[i2][j2])
+swap(tasks[i][j1], tasks[i][j2])
+swap(tasks[i1][j1], tasks[i2][j2])
+// swap(tasks[i1][j1:], tasks[i2][j2:])
+// swap(tasks[i1][:j1], tasks[i2][:j2])
+
+// 制約
+// s_{i, j} := コンテナa[i,j]が搬入される時刻
+// t_{c} := コンテナcが搬出される時刻
+//
+// s_{i, j1} + 2 <= s_{i, j2} where j1 < j2
+// t_{c1} + 2 <= t_{c2} where c1 < c2 and g(c1) == g(c2)
+// 中継場所は固定
+
+// 評価関数（移動経路とクレーンの衝突を無視したシミュレーション）
+fn simulate(tasks: Vec<Vec<Task>>) -> i64 {
+    let mut t = 0;
+    let mut t_in = vec![None; N * N];
+    let mut t_out = vec![None; N * N];
+    let mut cur_task = vec![0; N];
+    let mut busy_till = vec![0; N];
+    let mut in_task = vec![false; N];
+
+    for ci in 0..N {
+        if tasks[ci].len() == 0 {
+            continue;
+        }
+        busy_till[ci] = ci.abs_diff(tasks[ci][0].from.0) + (0_usize).abs_diff(tasks[ci][0].from.1);
+    }
+
+    loop {
+        for ci in 0..N {
+            if cur_task[ci] >= tasks.len() {
+                continue;
+            }
+            if t < busy_till[ci] {
+                continue;
+            }
+
+            let task = tasks[cur_task[i]];
+            if !in_task[ci] {
+                // 現在のタスクを開始できるか判定
+                let (i, j) = task.ij;
+
+                if j > 0 {
+                    let Some(prev_t_in) = t_in[a[i][j - 1]] else {
+                        continue;
+                    };
+                    if t < prev_t_in + 2 {
+                        continue;
+                    }
+                }
+                t_in[a[i][j]] = Some(t);
+                in_task[ci] = true;
+            } else {
+                // 現在のタスクを終了できるか判定
+                if j > 0 {
+                    let Some(prev_t_out) = t_out[a[i][j - 1]] else {
+                        continue;
+                    };
+                    if t < prev_t_out + 2 {
+                        continue;
+                    }
+                }
+                t_out[a[i][j]] = Some(t);
+                in_task[ci] = false;
+                cur_task[ci] += 1;
+                if cur_task[ci] < tasks.len() {
+                    busy_till[ci] = t + (
+                        tasks[ci][cur_task[ci] - 1].to.0.abs_diff(tasks[ci][cur_task[ci]].from.0)
+                        + tasks[ci][cur_task[ci] - 1].to.1.abs_diff(tasks[ci][cur_task[ci]].from.1)
+                    );
+                }
+            }
+        }
+    }
+    t
+}
+```
