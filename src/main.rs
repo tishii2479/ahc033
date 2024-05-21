@@ -5,7 +5,6 @@ mod util;
 use std::collections::VecDeque;
 
 use itertools::iproduct;
-use itertools::Itertools;
 use proconio::input;
 
 use crate::def::*;
@@ -37,12 +36,21 @@ fn main() {
     }
 
     let jobs = listup_jobs(&a);
-    for job in jobs.iter() {
-        eprintln!("{:?}", job);
-    }
-    eprintln!("{}", jobs.len());
+    // for job in jobs.iter() {
+    //     eprintln!("{:?}", job);
+    // }
+    // eprintln!("{}", jobs.len());
     let state = State::initialize(&jobs, &a);
-    dbg!(&state.crane_log[0], &state.crane_schedules[0]);
+    // for t in 0..100 {
+    //     eprintln!("t={t}");
+    //     for i in 0..N {
+    //         for j in 0..N {
+    //             eprint!(" {:?}", state.container_occupations[t][i][j]);
+    //         }
+    //         eprintln!();
+    //     }
+    // }
+    dbg!(&state.in_t, &state.out_t);
     let moves = state.to_moves();
     output_ans(&moves);
 }
@@ -118,7 +126,7 @@ impl State {
                 out_t[i][j] = crane_log[0].len();
             } else {
                 for t in crane_log[0].len()..MAX_T {
-                    container_occupations[t][job.from.0][job.from.1] = Some(job.c);
+                    container_occupations[t][job.to.0][job.to.1] = Some(job.c);
                 }
             }
             crane_log[0].push(job.to); // Q
@@ -572,6 +580,6 @@ impl Job {
     }
 
     fn is_out_job(&self) -> bool {
-        self.from.1 == N - 1
+        self.to.1 == N - 1
     }
 }
