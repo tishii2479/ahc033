@@ -1,5 +1,3 @@
-# 考察メモ
-
 # 5/17
 
 - 短期コンみたいな見た目と入力だけど、結構複雑だな
@@ -188,92 +186,147 @@ fn get_move_for_task(
 
 - 経路やクレーンの衝突を無視して（緩めて）最適化？
 - クレーンの経路をどれくらい後から求められるか
+- 中継地点の固定は強すぎる気がする
+- スコアは1/7程度にする必要がありそう
+    - 大体65ターンくらい？
+
+- 貪欲で良さそう
+- 経路は破壊再構築で作れそう
+
+# 5/20
+
+## 貪欲
 
 ```rust
-struct Task {
-    ij: (usize, usize),
+struct Job {
     from: (usize, usize),
     to: (usize, usize),
 }
-tasks[i] := クレーンiのタスクの順序
+```
 
-// 近傍
-move(tasks[i1][j1], tasks[i2][j2])
-swap(tasks[i][j1], tasks[i][j2])
-swap(tasks[i1][j1], tasks[i2][j2])
-// swap(tasks[i1][j1:], tasks[i2][j2:])
-// swap(tasks[i1][:j1], tasks[i2][:j2])
+- 実行するジョブを列挙する
+- クレーンへのジョブの割り当てを貪欲に割り当てる
+- ジョブを達成するクレーンの経路を求める
 
-// 制約
-// s_{i, j} := コンテナa[i,j]が搬入される時刻
-// t_{c} := コンテナcが搬出される時刻
-//
-// s_{i, j1} + 2 <= s_{i, j2} where j1 < j2
-// t_{c1} + 2 <= t_{c2} where c1 < c2 and g(c1) == g(c2)
-// 中継場所は固定
+- ジョブの列挙
 
-// 評価関数（移動経路とクレーンの衝突を無視したシミュレーション）
-fn simulate(tasks: Vec<Vec<Task>>) -> i64 {
-    let mut t = 0;
-    let mut t_in = vec![None; N * N];
-    let mut t_out = vec![None; N * N];
-    let mut cur_task = vec![0; N];
-    let mut busy_till = vec![0; N];
-    let mut in_task = vec![false; N];
+# 5/21
 
-    for ci in 0..N {
-        if tasks[ci].len() == 0 {
-            continue;
-        }
-        busy_till[ci] = ci.abs_diff(tasks[ci][0].from.0) + (0_usize).abs_diff(tasks[ci][0].from.1);
-    }
+```rust
+/// コンテナを運ぶスケジュールを最適化する
+/// Return:
+/// crane_schedules: Vec<Vec<(t: usize, p: (usize, usize), is_pickup: bool)>>;
+/// - クレーンがどの位置にいる必要があるかの制約
+/// container_occupations: Vec<Vec<Vec<Option<usize>>>>;
+/// - 各時刻の各マスのコンテナの設置状況
+fn optimize_first_stage();
 
-    loop {
-        for ci in 0..N {
-            if cur_task[ci] >= tasks.len() {
-                continue;
-            }
-            if t < busy_till[ci] {
-                continue;
-            }
+/// Return:
+/// crane_moves: Vec<Vec<Move>>
+/// - クレーンがとる行動
+fn optimize_second_stage();
+```
 
-            let task = tasks[cur_task[i]];
-            if !in_task[ci] {
-                // 現在のタスクを開始できるか判定
-                let (i, j) = task.ij;
+- 経路の探索
+    - `O(T * N * N^2) = 100*125 = 12,500`
 
-                if j > 0 {
-                    let Some(prev_t_in) = t_in[a[i][j - 1]] else {
-                        continue;
-                    };
-                    if t < prev_t_in + 2 {
-                        continue;
-                    }
-                }
-                t_in[a[i][j]] = Some(t);
-                in_task[ci] = true;
-            } else {
-                // 現在のタスクを終了できるか判定
-                if j > 0 {
-                    let Some(prev_t_out) = t_out[a[i][j - 1]] else {
-                        continue;
-                    };
-                    if t < prev_t_out + 2 {
-                        continue;
-                    }
-                }
-                t_out[a[i][j]] = Some(t);
-                in_task[ci] = false;
-                cur_task[ci] += 1;
-                if cur_task[ci] < tasks.len() {
-                    busy_till[ci] = t + (
-                        tasks[ci][cur_task[ci] - 1].to.0.abs_diff(tasks[ci][cur_task[ci]].from.0)
-                        + tasks[ci][cur_task[ci] - 1].to.1.abs_diff(tasks[ci][cur_task[ci]].from.1)
-                    );
-                }
-            }
-        }
-    }
-    t
+- 無理だった場合は？
+    - first-stageに戻り、割り当てをやり直す
+    - scheduleをt時刻分遅延させる
+    - コンテナを置く位置を変える
+    - タスクの割り当てを変更する
+        - きついタスクをクレーン0に割り当てる
+
+```rust
+struct Job {
+    c: (usize, usize)
+    from: (usize, usize),
+    to: (usize, usize),
+};
+```
+
+```
+1. jobs: Vec<(c: usize, from: (usize, usize), to: (usize, usize))>;
+2. (
+    crane_schedules: Vec<Vec<(t: usize, p: (usize, usize), is_pickup: bool)>>,
+    container_occupations: Vec<Vec<Vec<Option<usize>>>>
+);
+3. (
+    crane_log: Vec<Vec<Option<(usize, usize)>>>,
+)
+```
+
+## 最適化
+
+- 最適化方法
+    - 局所探索（山登り）
+- 評価関数（最小化）
+    - 総ターン数 + ペナルティ
+- 制約
+    - 同時刻に複数のコンテナが同じ位置に存在しない
+    - クレーン同士が衝突しない
+    - 搬入、搬出順序が正しい
+- 近傍
+    - 経路の再探索
+        - 変更するクレーンとスケジュールをランダムに選ぶ
+        - 該当するスケジュールの経路をdpにより再探索する
+        - スケジュールの所要時間が更新された場合
+            - 以降のcrane_logをずらし、validでないクレーンの経路を再探索する
+            - container_occupationsもずれるので、他のクレーンと衝突しないかも調べる必要がある
+        - スケジュールの所要時間が更新されない場合（しない場合）
+            - 何もしない
+        - 見つからなければ巻き戻す
+    - 配置を変更する
+        - 配置を変更するコンテナcをランダムに選ぶ
+        - container_positions, container_occupationsを更新する
+        - crane_schedulesを更新する
+            -   ```rust
+                let (ci, t) = container_assigned[c];
+                crane_schedules[ci][t].p = new_p;
+                ```
+        - t-1とtの経路を合わせて再探索する
+            - 所要時間の更新有無は選べる・更新する場合は所定の処理をする
+    - クレーン間のジョブの移動
+        - 移動
+            - 移動するクレーンと移動するジョブtを選ぶ（is_pickup = true）を選ぶ
+            - 移動後のクレーンのランダムな箇所にジョブを挿入する
+            - 移動前t-1->t+2の経路を再探索する
+                - 再探索後には他のクレーンとの衝突状況を確認する
+            - 挿入時刻をt'として、t'-1->t', t'->t'+1, t'+1->t'+2の経路を再探索する
+                - 再探索後には他のクレーンとの衝突状況を確認する
+        - スワップ
+    - 順序のスワップ
+- 初期解
+    - クレーン0に全てアサインする
+    - 貪欲にジョブを割り当てる
+        - 配置はランダム
+
+## 状態
+
+```rust
+struct State {
+    // [最適化対象] 各クレーンが各時刻にどこにいるか
+    crane_log: Vec<Option<p: (usize, usize)>>,
+    // crane_schedules: Vec<Vec<(c: usize, start_t: usize, end_t: usize, start_p: (usize, usize), end_p: (usize, usize))>>,
+    // crane_schedules: Vec<Vec<(t: usize, p: (usize, usize), c: usize, job_i: usize)>>,
+    // is_pickup == (i % 2 == 0)
+    crane_schedules: Vec<Vec<(t: usize, p: (usize, usize), c: usize, is_pickup: bool, job_i: usize)>>,
+    container_occupations: Vec<Vec<Vec<Option<c: usize>>>>,
+    container_positions: Vec<Vec<(start_t: usize, end_t: usize, p: (usize, usize))>>,
+    container_assigned: Vec<Vec<(ci: usize, t: usize)>>,
+}
+
+impl State {
+    fn can_move(self, ci: usize, t: usize, from: (usize, usize), to: (usize, usize));
+    fn find_new_path(self, ci: usize, start_t: usize, end_t: usize, from: (usize, usize), to: (usize, usize));
+    fn update_crane_path(self, ci: usize, start_t: usize, path: Vec<(usize, usize)>);
 }
 ```
+
+## 改善案
+
+- ジョブを移動させるときに順序を守る
+- 初期解を作る
+- ぺナルティ項を足す
+- 同じコンテナをn度運ぶ
+- 複数クレーンを使って入り口で上手いこと搬入する
