@@ -91,7 +91,6 @@ fn create_container_occupations(
 ) -> Vec<Vec<Vec<Option<usize>>>> {
     let mut container_occupations = vec![vec![vec![None; N]; N]; MAX_T];
     let mut t_in = vec![vec![0; N]; N];
-    let mut t_out = vec![vec![0; N]; N];
 
     let mut container_time_range = vec![(None, None); N * N];
     let mut container_pos = vec![None; N * N];
@@ -102,13 +101,9 @@ fn create_container_occupations(
                 t_in[i][j] = s.start_t;
             } else {
                 container_time_range[s.job.c].1 = Some(s.start_t);
-                assert_eq!(container_pos[s.job.c].unwrap(), s.job.from);
             }
 
-            if s.job.is_out_job() {
-                let (i, j) = (s.job.c / N, s.job.c % N);
-                t_out[i][j] = s.end_t;
-            } else {
+            if !s.job.is_out_job() {
                 container_time_range[s.job.c].0 = Some(s.end_t);
                 container_pos[s.job.c] = Some(s.job.to);
             }
@@ -199,13 +194,13 @@ fn optimize_upper_level(
     }
 
     let mut schedules = jobs_to_schedules(assigned_jobs);
-    let mut cur_score = eval_schedules(&schedules, &constraints, &jobs, false);
+    let mut cur_score = eval_schedules(&schedules, &constraints, &jobs, input, false);
     eprintln!("start-score: {}", cur_score);
 
     for _t in 0..100_000 {
         let p = rnd::nextf();
         let threshold = if cur_score > 1_000_000 { 1_000 } else { 1 };
-        if p < 0.4 {
+        if p < 0.2 {
             // 1. 一つのスケジュールの時間を伸ばす・減らす
             let ci = rnd::gen_index(N);
             if schedules[ci].len() == 0 {
@@ -223,13 +218,54 @@ fn optimize_upper_level(
                     s.end_t += d;
                 }
             }
-            let new_score = eval_schedules(&schedules, &constraints, &jobs, false);
+            let new_score = eval_schedules(&schedules, &constraints, &jobs, input, false);
 
             if new_score - cur_score < threshold {
                 cur_score = new_score;
                 eprintln!("[{_t}] {} -> {}", cur_score, new_score);
             } else {
                 schedules[ci] = a;
+            }
+        } else if p < 0.4 {
+            // 一つのコンテナの置く位置を変更する
+            let c = rnd::gen_index(N * N);
+            let mut prev_p = None;
+            let new_p = (rnd::gen_index(N), rnd::gen_range(1, N - 1));
+            for i in 0..N {
+                for s in schedules[i].iter_mut() {
+                    if s.job.c != c {
+                        continue;
+                    }
+                    if !s.job.is_out_job() {
+                        prev_p = Some(s.job.to);
+                        s.job.to = new_p;
+                    }
+                    if !s.job.is_in_job() {
+                        prev_p = Some(s.job.from);
+                        s.job.from = new_p;
+                    }
+                }
+            }
+            let Some(prev_p) = prev_p else { continue };
+
+            let new_score = eval_schedules(&schedules, &constraints, &jobs, input, false);
+            if new_score - cur_score < threshold {
+                eprintln!("[{_t}] {} -> {}", cur_score, new_score);
+                cur_score = new_score;
+            } else {
+                for i in 0..N {
+                    for s in schedules[i].iter_mut() {
+                        if s.job.c != c {
+                            continue;
+                        }
+                        if !s.job.is_out_job() {
+                            s.job.to = prev_p;
+                        }
+                        if !s.job.is_in_job() {
+                            s.job.from = prev_p;
+                        }
+                    }
+                }
             }
         } else if p < 0.6 {
             // 3. 一つのジョブを移動する
@@ -244,7 +280,7 @@ fn optimize_upper_level(
             let s = schedules[ci].remove(si);
             schedules[cj].insert(sj, s);
 
-            let new_score = eval_schedules(&schedules, &constraints, &jobs, false);
+            let new_score = eval_schedules(&schedules, &constraints, &jobs, input, false);
             if new_score - cur_score < threshold {
                 eprintln!("[{_t}] {} -> {}", cur_score, new_score);
                 cur_score = new_score;
@@ -265,7 +301,7 @@ fn optimize_upper_level(
             (schedules[ci][si].job, schedules[cj][sj].job) =
                 (schedules[cj][sj].job, schedules[ci][si].job);
 
-            let new_score = eval_schedules(&schedules, &constraints, &jobs, false);
+            let new_score = eval_schedules(&schedules, &constraints, &jobs, input, false);
             if new_score - cur_score < threshold {
                 cur_score = new_score;
                 eprintln!("[{_t}] {} -> {}", cur_score, new_score);
@@ -289,7 +325,7 @@ fn optimize_upper_level(
             (schedules[ci][si].job, schedules[ci][sj].job) =
                 (schedules[ci][sj].job, schedules[ci][si].job);
 
-            let new_score = eval_schedules(&schedules, &constraints, &jobs, false);
+            let new_score = eval_schedules(&schedules, &constraints, &jobs, input, false);
             if new_score - cur_score < threshold {
                 cur_score = new_score;
                 eprintln!("[{_t}] {} -> {}", cur_score, new_score);
@@ -301,15 +337,67 @@ fn optimize_upper_level(
         // 2. 一時点のスケジュールを全てのクレーンで伸ばす
     }
 
-    assert!(eval_schedules(&schedules, &constraints, &jobs, true) < 1_000);
+    assert!(eval_schedules(&schedules, &constraints, &jobs, input, true) < 1_000);
     let container_occupations = create_container_occupations(&schedules, input);
     (schedules, container_occupations)
+}
+
+fn eval_container_occupation(schedules: &Vec<Vec<Schedule>>, input: &Input) -> i64 {
+    let mut t_in = vec![vec![0; N]; N];
+
+    let mut container_time_range = vec![(None, None); N * N];
+    let mut container_pos = vec![None; N * N];
+
+    for ci in 0..N {
+        for s in schedules[ci].iter() {
+            if s.job.is_in_job() {
+                let (i, j) = input.c_to_a_ij[s.job.c];
+                t_in[i][j] = s.start_t;
+            } else {
+                container_time_range[s.job.c].1 = Some(s.start_t);
+            }
+
+            if !s.job.is_out_job() {
+                container_time_range[s.job.c].0 = Some(s.end_t);
+                container_pos[s.job.c] = Some(s.job.to);
+            }
+        }
+    }
+
+    let mut occupations = vec![vec![vec![]; N]; N];
+
+    for c in 0..N * N {
+        let (l, r) = container_time_range[c];
+        let Some(l) = l else { continue };
+        let r = r.unwrap();
+        let p = container_pos[c].unwrap();
+        occupations[p.0][p.1].push((l, r));
+    }
+
+    let mut penalty = 0;
+    for i in 0..N {
+        for j in 0..N {
+            for k1 in 0..occupations[i][j].len() {
+                for k2 in k1 + 1..occupations[i][j].len() {
+                    let (l1, r1) = occupations[i][j][k1];
+                    let (l2, r2) = occupations[i][j][k2];
+                    let (l, r) = (l1.max(l2), r1.min(r2));
+                    if r > l {
+                        penalty += r - l;
+                    }
+                }
+            }
+        }
+    }
+
+    penalty as i64
 }
 
 fn eval_schedules(
     schedules: &Vec<Vec<Schedule>>,
     constraints: &Vec<Constraint>,
     jobs: &Vec<Job>,
+    input: &Input,
     debug: bool,
 ) -> i64 {
     let mut mp = vec![(0, 0); jobs.len()];
@@ -429,7 +517,7 @@ fn eval_schedules(
         .max()
         .unwrap();
 
-    (score + penalty * 1_000_000) as i64
+    (score + penalty * 1_000_000) as i64 + eval_container_occupation(schedules, input) * 1_000
 }
 
 fn optimize_lower_level(
