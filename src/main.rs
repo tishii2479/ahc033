@@ -521,21 +521,19 @@ struct Schedule {
     job: Job,
 }
 
-fn is_moveable(
+fn move_cost(
     ci: usize,
     t: usize,
     v: (usize, usize),
-    d: (usize, usize),
+    nv: (usize, usize),
     over_container: bool,
     crane_log: &Vec<Vec<(usize, usize)>>,
     container_occupations: &Vec<Vec<Vec<Option<usize>>>>,
-) -> bool {
-    let (ni, nj) = (v.0 + d.0, v.1 + d.1);
-    if ni >= N || nj >= N {
-        return false;
-    }
+) -> usize {
+    let (ni, nj) = nv;
+    let mut collide = 0;
     if container_occupations[t + 1][ni][nj].is_some() && !over_container {
-        return false;
+        collide += 1;
     }
     for cj in 0..N {
         if ci == cj {
@@ -545,13 +543,13 @@ fn is_moveable(
             continue;
         }
         if crane_log[cj][t + 1] == (ni, nj) {
-            return false;
+            collide += 1;
         }
         if crane_log[cj][t] == (ni, nj) && crane_log[cj][t + 1] == v {
-            return false;
+            collide += 1;
         }
     }
-    true
+    collide
 }
 
 fn find_path_for_schedule(
@@ -562,11 +560,12 @@ fn find_path_for_schedule(
     path_finder: &mut PathFinder,
     crane_log: &Vec<Vec<(usize, usize)>>,
     container_occupations: &Vec<Vec<Vec<Option<usize>>>>,
-) -> Option<Vec<(usize, usize)>> {
+) -> (Vec<(usize, usize)>, usize) {
     let mut path = vec![];
+    let mut cost = 0;
 
     // last_t -> s.start_t の間に start_pos -> s.job.from に移動する
-    let Some(path1) = path_finder.find_path(
+    let (path1, cost1) = path_finder.find_path(
         ci,
         last_t,
         s.start_t,
@@ -575,14 +574,13 @@ fn find_path_for_schedule(
         true,
         &crane_log,
         &container_occupations,
-    ) else {
-        return None;
-    };
+    );
     path.extend(path1);
+    cost += cost1;
     path.push(s.job.from); // P
 
     // s.start_t + 1 -> s.end_t - 1の間に s.job.from -> s.job.to に移動する
-    let Some(path2) = path_finder.find_path(
+    let (path2, cost2) = path_finder.find_path(
         ci,
         s.start_t + 1,
         s.end_t,
@@ -591,27 +589,26 @@ fn find_path_for_schedule(
         ci == 0,
         &crane_log,
         &container_occupations,
-    ) else {
-        return None;
-    };
+    );
     path.extend(path2);
+    cost += cost2;
     path.push(s.job.to); // Q
 
-    Some(path)
+    (path, cost)
 }
 
 const PATH_NOT_FOUND: (usize, usize) = (N, N);
 
 struct PathFinder {
     id: usize,
-    dp: Vec<Vec<Vec<usize>>>, // id
+    dp: Vec<Vec<Vec<(usize, usize)>>>, // id
 }
 
 impl PathFinder {
     fn new() -> PathFinder {
         PathFinder {
             id: 0,
-            dp: vec![vec![vec![0; N]; N]; MAX_T],
+            dp: vec![vec![vec![(0, 0); N]; N]; MAX_T],
         }
     }
 
@@ -626,38 +623,46 @@ impl PathFinder {
         over_container: bool,
         crane_log: &Vec<Vec<(usize, usize)>>,
         container_occupations: &Vec<Vec<Vec<Option<usize>>>>,
-    ) -> Option<Vec<(usize, usize)>> {
+    ) -> (Vec<(usize, usize)>, usize) {
         self.id += 1;
-        self.dp[start_t][from.0][from.1] = self.id;
+        self.dp[start_t][from.0][from.1] = (self.id, 0);
         for t in start_t..end_t {
             for i in 0..N {
                 for j in 0..N {
-                    if self.dp[t][i][j] != self.id {
+                    if self.dp[t][i][j].0 != self.id {
                         continue;
                     }
                     for d in D {
-                        if !is_moveable(
+                        let (ni, nj) = (i + d.0, j + d.1);
+                        if ni >= N || nj >= N {
+                            continue;
+                        }
+                        let cost = move_cost(
                             ci,
                             t,
                             (i, j),
-                            d,
+                            (ni, nj),
                             over_container,
                             crane_log,
                             container_occupations,
-                        ) {
-                            continue;
+                        );
+                        let next = self.dp[t][i][j].1 + cost;
+                        if self.dp[t + 1][i + d.0][j + d.1].0 != self.id {
+                            self.dp[t + 1][i + d.0][j + d.1] = (self.id, next);
+                        } else if next < self.dp[t + 1][i + d.0][j + d.1].1 {
+                            self.dp[t + 1][i + d.0][j + d.1].1 = next;
                         }
-                        self.dp[t + 1][i + d.0][j + d.1] = self.id;
                     }
                 }
             }
         }
 
         // NOTE: 最後に拾う・落とすなどの操作をするため、時刻t+1に留まることができるか調べる必要がある？
-        if self.dp[end_t][to.0][to.1] != self.id {
-            return None;
-        }
-        Some(self.restore_path(start_t, end_t, from, to))
+        assert_eq!(self.dp[end_t][to.0][to.1].0, self.id);
+        (
+            self.restore_path(start_t, end_t, from, to),
+            self.dp[end_t][to.0][to.1].1,
+        )
     }
 
     fn restore_path(
@@ -672,12 +677,25 @@ impl PathFinder {
         let mut cur_t = end_t;
         while cur != from || start_t != cur_t {
             cur_t -= 1;
+            let min_next = REV_D
+                .iter()
+                .filter(|(di, dj)| {
+                    cur.0 + di < N
+                        && cur.1 + dj < N
+                        && self.dp[cur_t][cur.0 + di][cur.1 + dj].0 == self.id
+                })
+                .map(|(di, dj)| self.dp[cur_t][cur.0 + di][cur.1 + dj].1)
+                .min()
+                .unwrap();
             for &(di, dj) in REV_D.iter() {
                 let (ni, nj) = (cur.0 + di, cur.1 + dj);
                 if ni >= N || nj >= N {
                     continue;
                 }
-                if self.dp[cur_t][ni][nj] == self.id {
+                if self.dp[cur_t][ni][nj].0 != self.id {
+                    continue;
+                }
+                if self.dp[cur_t][ni][nj].1 == min_next {
                     path.push(cur);
                     cur = (ni, nj);
                     break;
@@ -711,7 +729,7 @@ impl State {
             for s in state.crane_schedules[ci].iter() {
                 let last_t = state.crane_log[ci].len() - 1;
                 let start_pos = *state.crane_log[ci].last().unwrap();
-                let Some(path) = find_path_for_schedule(
+                let (path, cost) = find_path_for_schedule(
                     ci,
                     last_t,
                     start_pos,
@@ -719,11 +737,7 @@ impl State {
                     &mut state.path_finder,
                     &state.crane_log,
                     &state.container_occupations,
-                ) else {
-                    state.crane_log[ci].extend(vec![PATH_NOT_FOUND; s.end_t - last_t - 1]);
-                    state.crane_log[ci].push(s.job.to);
-                    continue;
-                };
+                );
                 state.crane_log[ci].extend(path);
                 assert_eq!(
                     s.end_t + 2,
