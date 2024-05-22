@@ -204,13 +204,7 @@ fn optimize_upper_level(
 
     for _t in 0..100_000 {
         let p = rnd::nextf();
-        let threshold = if cur_score > 1_000_000 {
-            1_000
-        } else if cur_score > 1_000 {
-            10
-        } else {
-            0
-        };
+        let threshold = if cur_score > 1_000_000 { 1_000 } else { 0 };
         if p < 0.4 {
             // 1. 一つのスケジュールの時間を伸ばす・減らす
             let ci = rnd::gen_index(N);
