@@ -58,6 +58,7 @@ fn main() {
     // eprintln!("{}", jobs.len());
     let (crane_schedules, container_occupations) = optimize_upper_level(jobs, &input);
     let state = optimize_lower_level(crane_schedules, container_occupations);
+
     let moves = state.to_moves();
     output_ans(&moves);
 }
@@ -136,11 +137,11 @@ fn create_container_occupations(
 
 #[derive(Clone, Copy, Debug)]
 enum Constraint {
-    Start(usize, usize, usize),
-    End(usize, usize, usize),
-    FirstJob(usize, usize),
-    Consecutive(usize, usize, usize),
-    Job(usize, usize),
+    Start(usize, usize),
+    End(usize, usize),
+    FirstJob(usize),
+    Consecutive(usize, usize),
+    Job(usize),
 }
 
 fn dist(a: (usize, usize), b: (usize, usize)) -> usize {
@@ -157,18 +158,18 @@ fn create_constraints(jobs: &Vec<Job>, input: &Input) -> Vec<Constraint> {
         if job.is_in_job() {
             let (i, _) = input.c_to_a_ij[job.c];
             if let Some(prev_job_i) = prev_in[i] {
-                constraints.push(Constraint::Start(prev_job_i, job_i, 2));
+                constraints.push(Constraint::Start(prev_job_i, job_i));
             }
             prev_in[i] = Some(job_i);
         } else {
             let prev_job_i = prev_consecutive[job.c].unwrap();
-            constraints.push(Constraint::Consecutive(prev_job_i, job_i, 2));
+            constraints.push(Constraint::Consecutive(prev_job_i, job_i));
         }
 
         if job.is_out_job() {
             let i = job.c / N;
             if let Some(prev_job_i) = prev_out[i] {
-                constraints.push(Constraint::End(prev_job_i, job_i, 2));
+                constraints.push(Constraint::End(prev_job_i, job_i));
             }
             prev_out[i] = Some(job_i);
         } else {
@@ -177,7 +178,7 @@ fn create_constraints(jobs: &Vec<Job>, input: &Input) -> Vec<Constraint> {
     }
 
     for (job_i, job) in jobs.iter().enumerate() {
-        constraints.push(Constraint::Job(job_i, 1 + dist(job.from, job.to)));
+        constraints.push(Constraint::Job(job_i));
     }
 
     constraints
@@ -194,8 +195,8 @@ fn optimize_upper_level(
     }
 
     let mut schedules = jobs_to_schedules(assigned_jobs);
-    let mut cur_score = eval_schedules(&schedules, &constraints, &jobs, input, false);
-    eprintln!("start-score: {}", cur_score);
+    let mut cur_score = eval_schedules(&schedules, &constraints, &jobs, input);
+    eprintln!("[start]  upper-level-score: {}", cur_score);
 
     for _t in 0..100_000 {
         let p = rnd::nextf();
@@ -218,11 +219,11 @@ fn optimize_upper_level(
                     s.end_t += d;
                 }
             }
-            let new_score = eval_schedules(&schedules, &constraints, &jobs, input, false);
+            let new_score = eval_schedules(&schedules, &constraints, &jobs, input);
 
             if new_score - cur_score < threshold {
                 cur_score = new_score;
-                eprintln!("[{_t}] {} -> {}", cur_score, new_score);
+                // eprintln!("[{_t}] {} -> {}", cur_score, new_score);
             } else {
                 schedules[ci] = a;
             }
@@ -248,9 +249,9 @@ fn optimize_upper_level(
             }
             let Some(prev_p) = prev_p else { continue };
 
-            let new_score = eval_schedules(&schedules, &constraints, &jobs, input, false);
+            let new_score = eval_schedules(&schedules, &constraints, &jobs, input);
             if new_score - cur_score < threshold {
-                eprintln!("[{_t}] {} -> {}", cur_score, new_score);
+                // eprintln!("[{_t}] {} -> {}", cur_score, new_score);
                 cur_score = new_score;
             } else {
                 for i in 0..N {
@@ -280,9 +281,9 @@ fn optimize_upper_level(
             let s = schedules[ci].remove(si);
             schedules[cj].insert(sj, s);
 
-            let new_score = eval_schedules(&schedules, &constraints, &jobs, input, false);
+            let new_score = eval_schedules(&schedules, &constraints, &jobs, input);
             if new_score - cur_score < threshold {
-                eprintln!("[{_t}] {} -> {}", cur_score, new_score);
+                // eprintln!("[{_t}] {} -> {}", cur_score, new_score);
                 cur_score = new_score;
             } else {
                 let s = schedules[cj].remove(sj);
@@ -301,10 +302,10 @@ fn optimize_upper_level(
             (schedules[ci][si].job, schedules[cj][sj].job) =
                 (schedules[cj][sj].job, schedules[ci][si].job);
 
-            let new_score = eval_schedules(&schedules, &constraints, &jobs, input, false);
+            let new_score = eval_schedules(&schedules, &constraints, &jobs, input);
             if new_score - cur_score < threshold {
                 cur_score = new_score;
-                eprintln!("[{_t}] {} -> {}", cur_score, new_score);
+                // eprintln!("[{_t}] {} -> {}", cur_score, new_score);
             } else {
                 (schedules[ci][si].job, schedules[cj][sj].job) =
                     (schedules[cj][sj].job, schedules[ci][si].job);
@@ -325,10 +326,10 @@ fn optimize_upper_level(
             (schedules[ci][si].job, schedules[ci][sj].job) =
                 (schedules[ci][sj].job, schedules[ci][si].job);
 
-            let new_score = eval_schedules(&schedules, &constraints, &jobs, input, false);
+            let new_score = eval_schedules(&schedules, &constraints, &jobs, input);
             if new_score - cur_score < threshold {
                 cur_score = new_score;
-                eprintln!("[{_t}] {} -> {}", cur_score, new_score);
+                // eprintln!("[{_t}] {} -> {}", cur_score, new_score);
             } else {
                 (schedules[ci][si].job, schedules[ci][sj].job) =
                     (schedules[ci][sj].job, schedules[ci][si].job);
@@ -337,7 +338,8 @@ fn optimize_upper_level(
         // 2. 一時点のスケジュールを全てのクレーンで伸ばす
     }
 
-    assert!(eval_schedules(&schedules, &constraints, &jobs, input, true) < 1_000);
+    eprintln!("[end]    upper-level-score: {}", cur_score);
+    assert!(eval_schedules(&schedules, &constraints, &jobs, input) < 1_000);
     let container_occupations = create_container_occupations(&schedules, input);
     (schedules, container_occupations)
 }
@@ -398,7 +400,6 @@ fn eval_schedules(
     constraints: &Vec<Constraint>,
     jobs: &Vec<Job>,
     input: &Input,
-    debug: bool,
 ) -> i64 {
     let mut mp = vec![(0, 0); jobs.len()];
     for i in 0..N {
@@ -412,16 +413,11 @@ fn eval_schedules(
         for j in 0..schedules[i].len() {
             let to = schedules[i][j].job.from;
             if j == 0 {
-                constraints.push(Constraint::FirstJob(
-                    schedules[i][j].job.idx,
-                    dist((i, 0), to),
-                ));
+                constraints.push(Constraint::FirstJob(schedules[i][j].job.idx));
             } else {
-                let (prev_job_i, from) = (schedules[i][j - 1].job.idx, schedules[i][j - 1].job.to);
                 constraints.push(Constraint::Consecutive(
-                    prev_job_i,
+                    schedules[i][j - 1].job.idx,
                     schedules[i][j].job.idx,
-                    dist(from, to),
                 ));
             }
         }
@@ -430,11 +426,12 @@ fn eval_schedules(
     let mut penalty = 0;
     for c in constraints {
         match c {
-            Constraint::Start(prev_job_i, next_job_i, interval) => {
+            Constraint::Start(prev_job_i, next_job_i) => {
                 let (prev_s, next_s) = (
                     &schedules[mp[prev_job_i].0][mp[prev_job_i].1],
                     &schedules[mp[next_job_i].0][mp[next_job_i].1],
                 );
+                let interval = 2;
                 if prev_s.start_t + interval > next_s.start_t {
                     penalty += prev_s.start_t + interval - next_s.start_t;
                     assert!(
@@ -444,16 +441,14 @@ fn eval_schedules(
                         prev_s,
                         next_s
                     );
-                    if debug {
-                        dbg!(c, prev_s, next_s);
-                    }
                 }
             }
-            Constraint::End(prev_job_i, next_job_i, interval) => {
+            Constraint::End(prev_job_i, next_job_i) => {
                 let (prev_s, next_s) = (
                     &schedules[mp[prev_job_i].0][mp[prev_job_i].1],
                     &schedules[mp[next_job_i].0][mp[next_job_i].1],
                 );
+                let interval = 2;
                 if prev_s.end_t + interval > next_s.end_t {
                     penalty += prev_s.end_t + interval - next_s.end_t;
                     assert!(
@@ -464,18 +459,16 @@ fn eval_schedules(
                         next_s,
                         prev_s.end_t + interval - next_s.end_t
                     );
-                    if debug {
-                        dbg!(c, prev_s, next_s);
-                    }
                 }
             }
-            Constraint::Consecutive(prev_job_i, next_job_i, interval) => {
+            Constraint::Consecutive(prev_job_i, next_job_i) => {
                 let (prev_s, next_s) = (
                     &schedules[mp[prev_job_i].0][mp[prev_job_i].1],
                     &schedules[mp[next_job_i].0][mp[next_job_i].1],
                 );
-                if prev_s.end_t + interval > next_s.start_t {
-                    penalty += prev_s.end_t + interval - next_s.start_t;
+                let duration = dist(prev_s.job.to, next_s.job.from) + 2;
+                if prev_s.end_t + duration > next_s.start_t {
+                    penalty += prev_s.end_t + duration - next_s.start_t;
                     assert!(
                         penalty < 1_000_000_000_000,
                         "{:?} {:?} {:?}",
@@ -483,29 +476,23 @@ fn eval_schedules(
                         prev_s,
                         next_s
                     );
-                    if debug {
-                        dbg!(c, prev_s, next_s);
-                    }
                 }
             }
-            Constraint::FirstJob(job_i, interval) => {
+            Constraint::FirstJob(job_i) => {
                 let s = &schedules[mp[job_i].0][mp[job_i].1];
-                if s.start_t < interval {
-                    penalty += interval - s.start_t;
+                let duration = dist((input.c_to_a_ij[s.job.c].0, 0), s.job.from);
+                if s.start_t < duration {
+                    penalty += duration - s.start_t;
                     assert!(penalty < 1_000_000_000_000, "{:?} {:?}", c, s);
-                    if debug {
-                        dbg!(c, s);
-                    }
                 }
             }
-            Constraint::Job(job_i, interval) => {
+            Constraint::Job(job_i) => {
                 let s = &schedules[mp[job_i].0][mp[job_i].1];
-                if s.start_t + interval > s.end_t {
-                    penalty += s.start_t + interval - s.end_t;
+                let duration = dist(s.job.from, s.job.to) + 2;
+                assert_eq!(s.job.idx, job_i);
+                if s.start_t + duration > s.end_t {
+                    penalty += s.start_t + duration - s.end_t;
                     assert!(penalty < 1_000_000_000_000, "{:?}", s);
-                    if debug {
-                        dbg!(c, s);
-                    }
                 }
             }
         }
@@ -576,11 +563,11 @@ fn find_path_for_schedule(
     path_finder: &mut PathFinder,
     crane_log: &Vec<Vec<(usize, usize)>>,
     container_occupations: &Vec<Vec<Vec<Option<usize>>>>,
-) -> Vec<(usize, usize)> {
+) -> Option<Vec<(usize, usize)>> {
     let mut path = vec![];
 
     // last_t -> s.start_t の間に start_pos -> s.job.from に移動する
-    let path1 = path_finder.find_path(
+    let Some(path1) = path_finder.find_path(
         ci,
         last_t,
         s.start_t,
@@ -589,12 +576,14 @@ fn find_path_for_schedule(
         true,
         &crane_log,
         &container_occupations,
-    );
-    path.extend(path1.unwrap());
+    ) else {
+        return None;
+    };
+    path.extend(path1);
     path.push(s.job.from); // P
 
-    // s.start_t + 1 -> s.end_t の間に s.job.from -> s.job.to に移動する
-    let path2 = path_finder.find_path(
+    // s.start_t + 1 -> s.end_t - 1の間に s.job.from -> s.job.to に移動する
+    let Some(path2) = path_finder.find_path(
         ci,
         s.start_t + 1,
         s.end_t,
@@ -603,12 +592,16 @@ fn find_path_for_schedule(
         ci == 0,
         &crane_log,
         &container_occupations,
-    );
-    path.extend(path2.unwrap());
+    ) else {
+        return None;
+    };
+    path.extend(path2);
     path.push(s.job.to); // Q
 
-    path
+    Some(path)
 }
+
+const PATH_NOT_FOUND: (usize, usize) = (N, N);
 
 struct PathFinder {
     id: usize,
@@ -717,16 +710,33 @@ impl State {
         };
         for ci in 0..N {
             for s in state.crane_schedules[ci].iter() {
-                let path = find_path_for_schedule(
+                let last_t = state.crane_log[ci].len() - 1;
+                let start_pos = *state.crane_log[ci].last().unwrap();
+                let Some(path) = find_path_for_schedule(
                     ci,
-                    state.crane_log[ci].len() - 1,
-                    *state.crane_log[ci].last().unwrap(),
+                    last_t,
+                    start_pos,
                     s,
                     &mut state.path_finder,
                     &state.crane_log,
                     &state.container_occupations,
-                );
+                ) else {
+                    dbg!(ci, last_t, start_pos, &s);
+                    for t in last_t - 2..=s.start_t + 2 {
+                        state.print_t(t);
+                    }
+                    state.crane_log[ci].extend(vec![PATH_NOT_FOUND; s.end_t - last_t - 1]);
+                    state.crane_log[ci].push(s.job.to);
+                    continue;
+                };
                 state.crane_log[ci].extend(path);
+                assert_eq!(
+                    s.end_t + 2,
+                    state.crane_log[ci].len(),
+                    "{:?} {:?}",
+                    s,
+                    state.crane_log[ci]
+                );
             }
         }
         state
@@ -755,6 +765,43 @@ impl State {
             }
         }
         moves
+    }
+
+    fn print_t(&self, t: usize) {
+        eprintln!("t={};", t);
+        for i in 0..N {
+            for j in 0..N {
+                if let Some(c) = self.container_occupations[t][i][j] {
+                    eprint!("{:2}", c);
+                } else {
+                    eprint!("..");
+                }
+            }
+            eprintln!();
+        }
+        eprintln!();
+        eprintln!("t={};", t);
+        let mut a = vec![vec![N; N]; N];
+        for ci in 0..N {
+            if t >= self.crane_log[ci].len() {
+                continue;
+            }
+            let v = self.crane_log[ci][t];
+            if v != PATH_NOT_FOUND {
+                a[v.0][v.1] = ci;
+            }
+        }
+        for i in 0..N {
+            for j in 0..N {
+                if a[i][j] != N {
+                    eprint!("{}", a[i][j]);
+                } else {
+                    eprint!(".");
+                }
+            }
+            eprintln!();
+        }
+        eprintln!()
     }
 }
 
