@@ -218,12 +218,15 @@ fn optimize_upper_level(
                 continue;
             }
             let d = if rnd::nextf() < 0.5 { 1 } else { !0 };
-            let t = rnd::gen_index(schedules[ci].last().unwrap().end_t);
-            let t = if d == 1 { t } else { t.max(1) };
+            let t = if rnd::nextf() < 1. {
+                rnd::gen_index(schedules[ci].last().unwrap().end_t)
+            } else {
+                schedules[ci][rnd::gen_index(schedules[ci].len())].start_t
+            };
+            let t = if d == 1 { t } else { t.max(1) }; // オーバーフロー対策
             let a = schedules[ci].clone();
             for s in schedules[ci].iter_mut() {
                 if s.start_t >= t {
-                    // オーバーフロー対策
                     s.start_t += d;
                 }
                 if s.end_t >= t && s.start_t < s.end_t + d {
@@ -335,7 +338,7 @@ fn eval_schedules(
                     &schedules[mp[next_job_i].0][mp[next_job_i].1],
                 );
                 if prev_s.start_t + interval > next_s.start_t {
-                    penalty += (prev_s.start_t + interval - next_s.start_t) * 1_000_000;
+                    penalty += prev_s.start_t + interval - next_s.start_t;
                     assert!(
                         penalty < 1_000_000_000_000,
                         "{:?} {:?} {:?}",
@@ -354,7 +357,7 @@ fn eval_schedules(
                     &schedules[mp[next_job_i].0][mp[next_job_i].1],
                 );
                 if prev_s.end_t + interval > next_s.end_t {
-                    penalty += (prev_s.end_t + interval - next_s.end_t) * 1_000_000;
+                    penalty += prev_s.end_t + interval - next_s.end_t;
                     assert!(
                         penalty < 1_000_000_000_000,
                         "{:?} {:?} {:?} {}",
@@ -374,7 +377,7 @@ fn eval_schedules(
                     &schedules[mp[next_job_i].0][mp[next_job_i].1],
                 );
                 if prev_s.end_t + interval > next_s.start_t {
-                    penalty += (prev_s.end_t + interval - next_s.start_t) * 1_000_000;
+                    penalty += prev_s.end_t + interval - next_s.start_t;
                     assert!(
                         penalty < 1_000_000_000_000,
                         "{:?} {:?} {:?}",
@@ -390,7 +393,7 @@ fn eval_schedules(
             Constraint::FirstJob(job_i, interval) => {
                 let s = &schedules[mp[job_i].0][mp[job_i].1];
                 if s.start_t < interval {
-                    penalty += (interval - s.start_t) * 1_000;
+                    penalty += interval - s.start_t;
                     assert!(penalty < 1_000_000_000_000, "{:?} {:?}", c, s);
                     if debug {
                         dbg!(c, s);
@@ -400,7 +403,7 @@ fn eval_schedules(
             Constraint::Job(job_i, interval) => {
                 let s = &schedules[mp[job_i].0][mp[job_i].1];
                 if s.start_t + interval > s.end_t {
-                    penalty += (s.start_t + interval - s.end_t) * 1_000;
+                    penalty += s.start_t + interval - s.end_t;
                     assert!(penalty < 1_000_000_000_000, "{:?}", s);
                     if debug {
                         dbg!(c, s);
@@ -416,7 +419,7 @@ fn eval_schedules(
         .max()
         .unwrap();
 
-    (score + penalty) as i64
+    (score + penalty * 1_000_000) as i64
 }
 
 fn optimize_lower_level(
