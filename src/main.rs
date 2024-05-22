@@ -10,6 +10,21 @@ use proconio::input;
 use crate::def::*;
 use crate::util::*;
 
+struct Input {
+    a: Vec<Vec<usize>>,
+    c_to_a_ij: Vec<(usize, usize)>,
+}
+
+impl Input {
+    fn new(a: Vec<Vec<usize>>) -> Input {
+        let mut c_to_a_ij = vec![(0, 0); N * N];
+        for (i, j) in iproduct!(0..N, 0..N) {
+            c_to_a_ij[a[i][j]] = (i, j);
+        }
+        Input { a, c_to_a_ij }
+    }
+}
+
 fn output_ans(moves: &Vec<Vec<Move>>) {
     let mut score = 0;
     for i in 0..N {
@@ -35,51 +50,46 @@ fn main() {
         a: [[usize; N]; N],
     }
 
-    let jobs = listup_jobs(&a);
+    let input = Input::new(a);
+    let jobs = listup_jobs(&input);
     // for job in jobs.iter() {
     //     eprintln!("{:?}", job);
     // }
     // eprintln!("{}", jobs.len());
-    let (crane_schedules, container_occupations) = optimize_upper_level(jobs, &a);
+    let (crane_schedules, container_occupations) = optimize_upper_level(jobs, &input);
     let state = optimize_lower_level(crane_schedules, container_occupations);
-    dbg!(&state.crane_log[0]);
     let moves = state.to_moves();
     output_ans(&moves);
 }
 
-fn jobs_to_schedules(jobs: Vec<Job>, cur_pos: (usize, usize), start_t: usize) -> Vec<Schedule> {
-    let mut cur_pos = cur_pos;
-    let mut cur_t = start_t;
-    let mut schedules = vec![];
-    for job in jobs {
-        cur_t += cur_pos.0.abs_diff(job.from.0) + cur_pos.1.abs_diff(job.from.1);
-        let start_t = cur_t;
-        cur_t += 1; // P
-        cur_t += job.from.0.abs_diff(job.to.0) + job.from.1.abs_diff(job.to.1);
-        let end_t = cur_t;
-        cur_t += 1; // Q
-        cur_pos = job.to;
-        schedules.push(Schedule {
-            start_t,
-            end_t,
-            job,
-        })
+fn jobs_to_schedules(jobs: Vec<Vec<Job>>) -> Vec<Vec<Schedule>> {
+    let mut schedules = vec![vec![]; N];
+    for (ci, jobs_c) in jobs.into_iter().enumerate() {
+        let mut cur_pos: (usize, usize) = (ci, 0);
+        let mut cur_t = 0;
+        for job in jobs_c {
+            cur_t += cur_pos.0.abs_diff(job.from.0) + cur_pos.1.abs_diff(job.from.1);
+            let start_t = cur_t;
+            cur_t += 1; // P
+            cur_t += job.from.0.abs_diff(job.to.0) + job.from.1.abs_diff(job.to.1);
+            let end_t = cur_t;
+            cur_t += 1; // Q
+            cur_pos = job.to;
+            schedules[ci].push(Schedule {
+                start_t,
+                end_t,
+                job,
+            })
+        }
     }
     schedules
 }
 
-/// 評価関数（移動経路とクレーンの衝突を無視したシミュレーション）
-fn eval_schedules(
+fn create_container_occupations(
     schedules: &Vec<Vec<Schedule>>,
-    a: &Vec<Vec<usize>>,
-) -> (i64, Vec<Vec<Vec<Option<usize>>>>) {
+    input: &Input,
+) -> Vec<Vec<Vec<Option<usize>>>> {
     let mut container_occupations = vec![vec![vec![None; N]; N]; MAX_T];
-    let mut score = 0;
-
-    let mut c_to_in_ij = vec![(0, 0); N * N];
-    for (i, j) in iproduct!(0..N, 0..N) {
-        c_to_in_ij[a[i][j]] = (i, j);
-    }
     let mut t_in = vec![vec![0; N]; N];
     let mut t_out = vec![vec![0; N]; N];
 
@@ -88,7 +98,7 @@ fn eval_schedules(
     for ci in 0..N {
         for s in schedules[ci].iter() {
             if s.job.is_in_job() {
-                let (i, j) = c_to_in_ij[s.job.c];
+                let (i, j) = input.c_to_a_ij[s.job.c];
                 t_in[i][j] = s.start_t;
             } else {
                 container_time_range[s.job.c].1 = Some(s.start_t);
@@ -120,23 +130,293 @@ fn eval_schedules(
         let mut l = 0;
         for (j, &r) in t_in[i].iter().enumerate() {
             for t in l..r {
-                container_occupations[t][i][0] = Some(a[i][j]);
+                container_occupations[t][i][0] = Some(input.a[i][j]);
             }
             l = r;
         }
     }
 
-    (score, container_occupations)
+    container_occupations
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Constraint {
+    Start(usize, usize, usize),
+    End(usize, usize, usize),
+    FirstJob(usize, usize),
+    Consecutive(usize, usize, usize),
+    Job(usize, usize),
+}
+
+fn dist(a: (usize, usize), b: (usize, usize)) -> usize {
+    a.0.abs_diff(b.0) + a.1.abs_diff(b.1)
+}
+
+fn create_constraints(jobs: &Vec<Job>, input: &Input) -> Vec<Constraint> {
+    let mut constraints = vec![];
+    let mut prev_in: Vec<Option<usize>> = vec![None; N];
+    let mut prev_out: Vec<Option<usize>> = vec![None; N];
+    let mut prev_consecutive: Vec<Option<usize>> = vec![None; N * N];
+
+    for (job_i, job) in jobs.iter().enumerate() {
+        if job.is_in_job() {
+            let (i, _) = input.c_to_a_ij[job.c];
+            if let Some(prev_job_i) = prev_in[i] {
+                constraints.push(Constraint::Start(prev_job_i, job_i, 2));
+            }
+            prev_in[i] = Some(job_i);
+        } else {
+            let prev_job_i = prev_consecutive[job.c].unwrap();
+            constraints.push(Constraint::Consecutive(prev_job_i, job_i, 2));
+        }
+
+        if job.is_out_job() {
+            let i = job.c / N;
+            if let Some(prev_job_i) = prev_out[i] {
+                constraints.push(Constraint::End(prev_job_i, job_i, 2));
+            }
+            prev_out[i] = Some(job_i);
+        } else {
+            prev_consecutive[job.c] = Some(job_i);
+        }
+    }
+
+    for (job_i, job) in jobs.iter().enumerate() {
+        constraints.push(Constraint::Job(job_i, 1 + dist(job.from, job.to)));
+    }
+
+    constraints
 }
 
 fn optimize_upper_level(
     jobs: Vec<Job>,
-    a: &Vec<Vec<usize>>,
+    input: &Input,
 ) -> (Vec<Vec<Schedule>>, Vec<Vec<Vec<Option<usize>>>>) {
-    let mut schedules: Vec<Vec<Schedule>> = vec![vec![]; N];
-    schedules[0] = jobs_to_schedules(jobs, (0, 0), 0);
-    let (_, container_occupations) = eval_schedules(&schedules, a);
+    let constraints = create_constraints(&jobs, input);
+    let mut assigned_jobs: Vec<Vec<Job>> = vec![vec![]; N];
+    for job in jobs.iter() {
+        assigned_jobs[rnd::gen_index(N)].push(job.clone());
+    }
+
+    let mut schedules = jobs_to_schedules(assigned_jobs);
+    let mut cur_score = eval_schedules(&schedules, &constraints, &jobs, false);
+    eprintln!("start-score: {}", cur_score);
+
+    for _t in 0..100_000 {
+        let p = rnd::nextf();
+        let threshold = if cur_score > 1_000_000 {
+            1_000
+        } else if cur_score > 1_000 {
+            10
+        } else {
+            0
+        };
+        if p < 0.4 {
+            // 1. 一つのスケジュールの時間を伸ばす・減らす
+            let ci = rnd::gen_index(N);
+            if schedules[ci].len() == 0 {
+                continue;
+            }
+            let d = if rnd::nextf() < 0.5 { 1 } else { !0 };
+            let t = rnd::gen_index(schedules[ci].last().unwrap().end_t);
+            let t = if d == 1 { t } else { t.max(1) };
+            let a = schedules[ci].clone();
+            for s in schedules[ci].iter_mut() {
+                if s.start_t >= t {
+                    // オーバーフロー対策
+                    s.start_t += d;
+                }
+                if s.end_t >= t && s.start_t < s.end_t + d {
+                    s.end_t += d;
+                }
+            }
+            let new_score = eval_schedules(&schedules, &constraints, &jobs, false);
+
+            if new_score - cur_score < threshold {
+                cur_score = new_score;
+                eprintln!("[{_t}] {} -> {}", cur_score, new_score);
+            } else {
+                schedules[ci] = a;
+            }
+        } else if p < 0.7 {
+            // 4. クレーン間でジョブをスワップする
+            let (ci, cj) = (rnd::gen_index(N), rnd::gen_index(N));
+            if ci == cj || schedules[ci].len() == 0 || schedules[cj].len() == 0 {
+                continue;
+            }
+            let (si, sj) = (
+                rnd::gen_index(schedules[ci].len()),
+                rnd::gen_index(schedules[cj].len()),
+            );
+            (schedules[ci][si].job, schedules[cj][sj].job) =
+                (schedules[cj][sj].job, schedules[ci][si].job);
+
+            let new_score = eval_schedules(&schedules, &constraints, &jobs, false);
+            if new_score - cur_score < threshold {
+                cur_score = new_score;
+                eprintln!("[{_t}] {} -> {}", cur_score, new_score);
+            } else {
+                (schedules[ci][si].job, schedules[cj][sj].job) =
+                    (schedules[cj][sj].job, schedules[ci][si].job);
+            }
+        } else {
+            // 5. クレーン内でジョブをスワップする
+            let ci = rnd::gen_index(N);
+            if schedules[ci].len() < 2 {
+                continue;
+            }
+            let (si, sj) = (
+                rnd::gen_index(schedules[ci].len()),
+                rnd::gen_index(schedules[ci].len()),
+            );
+            if si == sj {
+                continue;
+            }
+            (schedules[ci][si].job, schedules[ci][sj].job) =
+                (schedules[ci][sj].job, schedules[ci][si].job);
+
+            let new_score = eval_schedules(&schedules, &constraints, &jobs, false);
+            if new_score - cur_score < threshold {
+                cur_score = new_score;
+                eprintln!("[{_t}] {} -> {}", cur_score, new_score);
+            } else {
+                (schedules[ci][si].job, schedules[ci][sj].job) =
+                    (schedules[ci][sj].job, schedules[ci][si].job);
+            }
+        }
+        // 2. 一時点のスケジュールを全てのクレーンで伸ばす
+        // 3. 一つのジョブを移動する
+    }
+
+    assert!(eval_schedules(&schedules, &constraints, &jobs, true) < 1_000);
+    let container_occupations = create_container_occupations(&schedules, input);
     (schedules, container_occupations)
+}
+
+fn eval_schedules(
+    schedules: &Vec<Vec<Schedule>>,
+    constraints: &Vec<Constraint>,
+    jobs: &Vec<Job>,
+    debug: bool,
+) -> i64 {
+    let mut mp = vec![(0, 0); jobs.len()];
+    for i in 0..N {
+        for (j, s) in schedules[i].iter().enumerate() {
+            mp[s.job.idx] = (i, j);
+        }
+    }
+
+    let mut constraints = constraints.clone();
+    for i in 0..N {
+        for j in 0..schedules[i].len() {
+            let to = schedules[i][j].job.from;
+            if j == 0 {
+                constraints.push(Constraint::FirstJob(
+                    schedules[i][j].job.idx,
+                    dist((i, 0), to),
+                ));
+            } else {
+                let (prev_job_i, from) = (schedules[i][j - 1].job.idx, schedules[i][j - 1].job.to);
+                constraints.push(Constraint::Consecutive(
+                    prev_job_i,
+                    schedules[i][j].job.idx,
+                    dist(from, to),
+                ));
+            }
+        }
+    }
+
+    let mut penalty = 0;
+    for c in constraints {
+        match c {
+            Constraint::Start(prev_job_i, next_job_i, interval) => {
+                let (prev_s, next_s) = (
+                    &schedules[mp[prev_job_i].0][mp[prev_job_i].1],
+                    &schedules[mp[next_job_i].0][mp[next_job_i].1],
+                );
+                if prev_s.start_t + interval > next_s.start_t {
+                    penalty += (prev_s.start_t + interval - next_s.start_t) * 1_000_000;
+                    assert!(
+                        penalty < 1_000_000_000_000,
+                        "{:?} {:?} {:?}",
+                        c,
+                        prev_s,
+                        next_s
+                    );
+                    if debug {
+                        dbg!(c, prev_s, next_s);
+                    }
+                }
+            }
+            Constraint::End(prev_job_i, next_job_i, interval) => {
+                let (prev_s, next_s) = (
+                    &schedules[mp[prev_job_i].0][mp[prev_job_i].1],
+                    &schedules[mp[next_job_i].0][mp[next_job_i].1],
+                );
+                if prev_s.end_t + interval > next_s.end_t {
+                    penalty += (prev_s.end_t + interval - next_s.end_t) * 1_000_000;
+                    assert!(
+                        penalty < 1_000_000_000_000,
+                        "{:?} {:?} {:?} {}",
+                        c,
+                        prev_s,
+                        next_s,
+                        prev_s.end_t + interval - next_s.end_t
+                    );
+                    if debug {
+                        dbg!(c, prev_s, next_s);
+                    }
+                }
+            }
+            Constraint::Consecutive(prev_job_i, next_job_i, interval) => {
+                let (prev_s, next_s) = (
+                    &schedules[mp[prev_job_i].0][mp[prev_job_i].1],
+                    &schedules[mp[next_job_i].0][mp[next_job_i].1],
+                );
+                if prev_s.end_t + interval > next_s.start_t {
+                    penalty += (prev_s.end_t + interval - next_s.start_t) * 1_000_000;
+                    assert!(
+                        penalty < 1_000_000_000_000,
+                        "{:?} {:?} {:?}",
+                        c,
+                        prev_s,
+                        next_s
+                    );
+                    if debug {
+                        dbg!(c, prev_s, next_s);
+                    }
+                }
+            }
+            Constraint::FirstJob(job_i, interval) => {
+                let s = &schedules[mp[job_i].0][mp[job_i].1];
+                if s.start_t < interval {
+                    penalty += (interval - s.start_t) * 1_000;
+                    assert!(penalty < 1_000_000_000_000, "{:?} {:?}", c, s);
+                    if debug {
+                        dbg!(c, s);
+                    }
+                }
+            }
+            Constraint::Job(job_i, interval) => {
+                let s = &schedules[mp[job_i].0][mp[job_i].1];
+                if s.start_t + interval > s.end_t {
+                    penalty += (s.start_t + interval - s.end_t) * 1_000;
+                    assert!(penalty < 1_000_000_000_000, "{:?}", s);
+                    if debug {
+                        dbg!(c, s);
+                    }
+                }
+            }
+        }
+    }
+
+    let score = (0..N)
+        .filter(|&ci| schedules[ci].len() > 0)
+        .map(|ci| schedules[ci].last().unwrap().end_t)
+        .max()
+        .unwrap();
+
+    (score + penalty) as i64
 }
 
 fn optimize_lower_level(
@@ -377,7 +657,7 @@ impl State {
     }
 }
 
-fn listup_jobs(a: &Vec<Vec<usize>>) -> Vec<Job> {
+fn listup_jobs(input: &Input) -> Vec<Job> {
     fn eval(order: &Vec<usize>, place: &Vec<(usize, usize)>, a: &Vec<Vec<usize>>) -> i64 {
         let mut moved = vec![false; N * N]; // moved[c] := コンテナcを搬入したかどうか
         let mut used_count = vec![vec![0; N]; N];
@@ -458,7 +738,7 @@ fn listup_jobs(a: &Vec<Vec<usize>>) -> Vec<Job> {
         place[i] = (rnd::gen_index(N), rnd::gen_range(1, N - 1));
     }
 
-    let mut cur_score = eval(&order, &place, a);
+    let mut cur_score = eval(&order, &place, &input.a);
     for _t in 0..10000 {
         let p = rnd::nextf();
         if p < 0.5 {
@@ -468,7 +748,7 @@ fn listup_jobs(a: &Vec<Vec<usize>>) -> Vec<Job> {
             }
             order.swap(i, j);
 
-            let new_score = eval(&order, &place, a);
+            let new_score = eval(&order, &place, &input.a);
             if new_score < cur_score {
                 eprintln!("[{}] a: {} -> {}", _t, cur_score, new_score);
                 cur_score = new_score;
@@ -480,7 +760,7 @@ fn listup_jobs(a: &Vec<Vec<usize>>) -> Vec<Job> {
             let prev_p = place[ci];
             place[ci] = (rnd::gen_index(N), rnd::gen_range(1, N - 1));
 
-            let new_score = eval(&order, &place, a);
+            let new_score = eval(&order, &place, &input.a);
             if new_score < cur_score {
                 eprintln!("[{}] b: {} -> {}", _t, cur_score, new_score);
                 cur_score = new_score;
@@ -490,7 +770,7 @@ fn listup_jobs(a: &Vec<Vec<usize>>) -> Vec<Job> {
         }
     }
 
-    convert_in_order_and_in_place_to_jobs(&order, &place, a)
+    convert_in_order_and_in_place_to_jobs(&order, &place, &input.a)
 }
 
 fn convert_in_order_and_in_place_to_jobs(
