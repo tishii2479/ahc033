@@ -212,21 +212,6 @@ struct Job {
 
 # 5/21
 
-```rust
-/// コンテナを運ぶスケジュールを最適化する
-/// Return:
-/// crane_schedules: Vec<Vec<(t: usize, p: (usize, usize), is_pickup: bool)>>;
-/// - クレーンがどの位置にいる必要があるかの制約
-/// container_occupations: Vec<Vec<Vec<Option<usize>>>>;
-/// - 各時刻の各マスのコンテナの設置状況
-fn optimize_first_stage();
-
-/// Return:
-/// crane_moves: Vec<Vec<Move>>
-/// - クレーンがとる行動
-fn optimize_second_stage();
-```
-
 - 経路の探索
     - `O(T * N * N^2) = 100*125 = 12,500`
 
@@ -330,3 +315,28 @@ impl State {
 - ぺナルティ項を足す
 - 同じコンテナをn度運ぶ
 - 複数クレーンを使って入り口で上手いこと搬入する
+
+# 5/22
+
+- やっぱり2段階で解こう
+    - 差分更新は相当難しい
+    - うまくいかなければ
+        - 配置を変える
+        - ジョブの入れ替え
+        - ジョブの時間を伸ばす
+
+```rust
+/// コンテナを運ぶスケジュールを最適化する
+/// Return:
+/// crane_schedules: Vec<Vec<(t: usize, p: (usize, usize), is_pickup: bool)>>;
+/// - クレーンがどの位置にいる必要があるかの制約
+/// container_occupations: Vec<Vec<Vec<Option<usize>>>>;
+/// - 各時刻の各マスのコンテナの設置状況
+fn optimize_first_stage();
+
+/// Return:
+/// crane_moves: Vec<Vec<Move>>
+/// - クレーンがとる行動
+fn optimize_second_stage();
+```
+

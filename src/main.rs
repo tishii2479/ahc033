@@ -40,7 +40,7 @@ fn main() {
     //     eprintln!("{:?}", job);
     // }
     // eprintln!("{}", jobs.len());
-    let state = State::initialize(&jobs, &a);
+    let state = State::initialize(jobs, &a);
     // for t in 0..100 {
     //     eprintln!("t={t}");
     //     for i in 0..N {
@@ -50,17 +50,42 @@ fn main() {
     //         eprintln!();
     //     }
     // }
-    dbg!(&state.in_t, &state.out_t);
+    // dbg!(&state.in_t, &state.out_t);
+    let state = optimize_state(state);
     let moves = state.to_moves();
     output_ans(&moves);
 }
 
 #[derive(Clone, Copy, Debug)]
 struct Schedule {
-    t: usize,
-    p: (usize, usize),
-    c: usize,
+    start_t: usize,
+    end_t: usize,
     job_i: usize,
+}
+
+fn optimize_state(mut state: State) -> State {
+    move_job(&mut state);
+    state
+}
+
+fn move_job(state: &mut State) {
+    let (ci_from, ci_to) = (0, rnd::gen_range(1, N));
+    let s_from = rnd::gen_index(state.crane_schedules[ci_from].len());
+    let job_i = state.crane_schedules[ci_from][s_from].job_i;
+    // let t_to = rnd::gen_index(state.crane_schedules[ci_to].len() / 2 + 1) * 2;
+    let s_to = {
+        let mut ret = state.crane_schedules[ci_to].len();
+        for (i, s) in state.crane_schedules[ci_to].iter().enumerate() {
+            if job_i > s.job_i {
+                ret = i;
+                break;
+            }
+        }
+        ret
+    };
+
+    // ci_fromのs-1からs+1までの経路を再探索する
+    // state.crane_log[state.crane_schedules[s-1].end_t:]
 }
 
 struct State {
@@ -69,11 +94,12 @@ struct State {
     container_occupations: Vec<Vec<Vec<Option<usize>>>>,
     in_t: Vec<Vec<usize>>,
     out_t: Vec<Vec<usize>>,
-    c_to_ij: Vec<(usize, usize)>,
+    c_to_in_ij: Vec<(usize, usize)>,
+    jobs: Vec<Job>,
 }
 
 impl State {
-    fn initialize(jobs: &Vec<Job>, a: &Vec<Vec<usize>>) -> State {
+    fn initialize(jobs: Vec<Job>, a: &Vec<Vec<usize>>) -> State {
         let mut c_to_in_ij = vec![(0, 0); N * N];
         for (i, j) in iproduct!(0..N, 0..N) {
             c_to_in_ij[a[i][j]] = (i, j);
@@ -97,12 +123,7 @@ impl State {
         for (job_i, job) in jobs.iter().enumerate() {
             let path = get_straight_path(cur_pos, job.from);
             crane_log[0].extend(path);
-            crane_schedules[0].push(Schedule {
-                t: crane_log[0].len(),
-                p: job.from,
-                c: job.c,
-                job_i,
-            });
+            let start_t = crane_log[0].len();
             if job.is_in_job() {
                 let (i, j) = c_to_in_ij[job.c];
                 in_t[i][j] = crane_log[0].len();
@@ -115,10 +136,10 @@ impl State {
 
             let path = get_straight_path(job.from, job.to);
             crane_log[0].extend(path);
+            let end_t = crane_log[0].len();
             crane_schedules[0].push(Schedule {
-                t: crane_log[0].len(),
-                p: job.to,
-                c: job.c,
+                start_t,
+                end_t,
                 job_i,
             });
             if job.is_out_job() {
@@ -140,7 +161,8 @@ impl State {
             container_occupations,
             in_t,
             out_t,
-            c_to_ij: c_to_in_ij,
+            c_to_in_ij,
+            jobs,
         }
     }
 
@@ -156,9 +178,9 @@ impl State {
                 );
                 moves[i].push(Move::from_d(d));
             }
-            for (j, schedule) in self.crane_schedules[i].iter().enumerate() {
-                let m = if j % 2 == 0 { Move::Pick } else { Move::Drop };
-                moves[i][schedule.t - 1] = m;
+            for s in self.crane_schedules[i].iter() {
+                moves[i][s.start_t - 1] = Move::Pick;
+                moves[i][s.end_t - 1] = Move::Drop;
             }
         }
 
@@ -211,10 +233,6 @@ fn get_straight_path(from: (usize, usize), to: (usize, usize)) -> Vec<(usize, us
         );
     }
     v
-}
-
-fn optimize_schedule(state: State) {
-    unimplemented!();
 }
 
 struct PathFinder {
