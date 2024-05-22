@@ -42,6 +42,7 @@ fn main() {
     // eprintln!("{}", jobs.len());
     let (crane_schedules, container_occupations) = optimize_upper_level(jobs, &a);
     let state = optimize_lower_level(crane_schedules, container_occupations);
+    dbg!(&state.crane_log[0]);
     let moves = state.to_moves();
     output_ans(&moves);
 }
@@ -73,9 +74,59 @@ fn eval_schedules(
     a: &Vec<Vec<usize>>,
 ) -> (i64, Vec<Vec<Vec<Option<usize>>>>) {
     let mut container_occupations = vec![vec![vec![None; N]; N]; MAX_T];
-    for ci in 0..N {}
+    let mut score = 0;
 
-    (0, container_occupations)
+    let mut c_to_in_ij = vec![(0, 0); N * N];
+    for (i, j) in iproduct!(0..N, 0..N) {
+        c_to_in_ij[a[i][j]] = (i, j);
+    }
+    let mut t_in = vec![vec![0; N]; N];
+    let mut t_out = vec![vec![0; N]; N];
+
+    let mut container_time_range = vec![(None, None); N * N];
+    let mut container_pos = vec![None; N * N];
+    for ci in 0..N {
+        for s in schedules[ci].iter() {
+            if s.job.is_in_job() {
+                let (i, j) = c_to_in_ij[s.job.c];
+                t_in[i][j] = s.start_t;
+            } else {
+                container_time_range[s.job.c].1 = Some(s.start_t);
+                assert_eq!(container_pos[s.job.c].unwrap(), s.job.from);
+            }
+
+            if s.job.is_out_job() {
+                let (i, j) = (s.job.c / N, s.job.c % N);
+                t_out[i][j] = s.end_t;
+            } else {
+                container_time_range[s.job.c].0 = Some(s.end_t);
+                container_pos[s.job.c] = Some(s.job.to);
+            }
+        }
+    }
+
+    for c in 0..N * N {
+        let (l, r) = container_time_range[c];
+        let Some(l) = l else { continue };
+        let r = r.unwrap();
+        let p = container_pos[c].unwrap();
+        for t in l + 1..r {
+            assert!(container_occupations[t][p.0][p.1].is_none());
+            container_occupations[t][p.0][p.1] = Some(c);
+        }
+    }
+
+    for i in 0..N {
+        let mut l = 0;
+        for (j, &r) in t_in[i].iter().enumerate() {
+            for t in l..r {
+                container_occupations[t][i][0] = Some(a[i][j]);
+            }
+            l = r;
+        }
+    }
+
+    (score, container_occupations)
 }
 
 fn optimize_upper_level(
@@ -84,7 +135,7 @@ fn optimize_upper_level(
 ) -> (Vec<Vec<Schedule>>, Vec<Vec<Vec<Option<usize>>>>) {
     let mut schedules: Vec<Vec<Schedule>> = vec![vec![]; N];
     schedules[0] = jobs_to_schedules(jobs, (0, 0), 0);
-    let (_, container_occupations) = eval_schedules(&schedules, a, false);
+    let (_, container_occupations) = eval_schedules(&schedules, a);
     (schedules, container_occupations)
 }
 
@@ -108,6 +159,7 @@ fn is_moveable(
     t: usize,
     v: (usize, usize),
     d: (usize, usize),
+    over_container: bool,
     crane_log: &Vec<Vec<(usize, usize)>>,
     container_occupations: &Vec<Vec<Vec<Option<usize>>>>,
 ) -> bool {
@@ -115,7 +167,7 @@ fn is_moveable(
     if ni >= N || nj >= N {
         return false;
     }
-    if container_occupations[t + 1][ni][nj].is_some() {
+    if container_occupations[t + 1][ni][nj].is_some() && !over_container {
         return false;
     }
     for cj in 0..N {
@@ -153,6 +205,7 @@ fn find_path_for_schedule(
         s.start_t,
         start_pos,
         s.job.from,
+        true,
         &crane_log,
         &container_occupations,
     );
@@ -166,6 +219,7 @@ fn find_path_for_schedule(
         s.end_t,
         s.job.from,
         s.job.to,
+        ci == 0,
         &crane_log,
         &container_occupations,
     );
@@ -196,6 +250,7 @@ impl PathFinder {
         end_t: usize,
         from: (usize, usize),
         to: (usize, usize),
+        over_container: bool,
         crane_log: &Vec<Vec<(usize, usize)>>,
         container_occupations: &Vec<Vec<Vec<Option<usize>>>>,
     ) -> Option<Vec<(usize, usize)>> {
@@ -208,7 +263,15 @@ impl PathFinder {
                         continue;
                     }
                     for d in D {
-                        if !is_moveable(ci, t, (i, j), d, crane_log, container_occupations) {
+                        if !is_moveable(
+                            ci,
+                            t,
+                            (i, j),
+                            d,
+                            over_container,
+                            crane_log,
+                            container_occupations,
+                        ) {
                             continue;
                         }
                         self.dp[t + 1][i + d.0][j + d.1] = self.id;
@@ -299,8 +362,8 @@ impl State {
                 moves[i].push(Move::from_d(d));
             }
             for s in self.crane_schedules[i].iter() {
-                moves[i][s.start_t - 1] = Move::Pick;
-                moves[i][s.end_t - 1] = Move::Drop;
+                moves[i][s.start_t] = Move::Pick;
+                moves[i][s.end_t] = Move::Drop;
             }
         }
 
