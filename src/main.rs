@@ -204,7 +204,7 @@ fn optimize_upper_level(
 
     for _t in 0..100_000 {
         let p = rnd::nextf();
-        let threshold = if cur_score > 1_000_000 { 1_000 } else { 0 };
+        let threshold = if cur_score > 1_000_000 { 1_000 } else { 1 };
         if p < 0.4 {
             // 1. 一つのスケジュールの時間を伸ばす・減らす
             let ci = rnd::gen_index(N);
@@ -212,11 +212,7 @@ fn optimize_upper_level(
                 continue;
             }
             let d = if rnd::nextf() < 0.5 { 1 } else { !0 };
-            let t = if rnd::nextf() < 1. {
-                rnd::gen_index(schedules[ci].last().unwrap().end_t)
-            } else {
-                schedules[ci][rnd::gen_index(schedules[ci].len())].start_t
-            };
+            let t = rnd::gen_index(schedules[ci].last().unwrap().end_t);
             let t = if d == 1 { t } else { t.max(1) }; // オーバーフロー対策
             let a = schedules[ci].clone();
             for s in schedules[ci].iter_mut() {
@@ -235,7 +231,28 @@ fn optimize_upper_level(
             } else {
                 schedules[ci] = a;
             }
-        } else if p < 0.7 {
+        } else if p < 0.6 {
+            // 3. 一つのジョブを移動する
+            let (ci, cj) = (rnd::gen_index(N), rnd::gen_index(N));
+            if ci == cj || schedules[ci].len() == 0 {
+                continue;
+            }
+            let (si, sj) = (
+                rnd::gen_index(schedules[ci].len()),
+                rnd::gen_index(schedules[cj].len() + 1),
+            );
+            let s = schedules[ci].remove(si);
+            schedules[cj].insert(sj, s);
+
+            let new_score = eval_schedules(&schedules, &constraints, &jobs, false);
+            if new_score - cur_score < threshold {
+                eprintln!("[{_t}] {} -> {}", cur_score, new_score);
+                cur_score = new_score;
+            } else {
+                let s = schedules[cj].remove(sj);
+                schedules[ci].insert(si, s);
+            }
+        } else if p < 0.8 {
             // 4. クレーン間でジョブをスワップする
             let (ci, cj) = (rnd::gen_index(N), rnd::gen_index(N));
             if ci == cj || schedules[ci].len() == 0 || schedules[cj].len() == 0 {
@@ -282,7 +299,6 @@ fn optimize_upper_level(
             }
         }
         // 2. 一時点のスケジュールを全てのクレーンで伸ばす
-        // 3. 一つのジョブを移動する
     }
 
     assert!(eval_schedules(&schedules, &constraints, &jobs, true) < 1_000);
