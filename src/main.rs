@@ -177,8 +177,8 @@ fn create_constraints(jobs: &Vec<Job>, input: &Input) -> Vec<Constraint> {
         }
     }
 
-    for (job_i, job) in jobs.iter().enumerate() {
-        constraints.push(Constraint::Job(job_i));
+    for i in 0..jobs.len() {
+        constraints.push(Constraint::Job(i));
     }
 
     constraints
@@ -411,7 +411,6 @@ fn eval_schedules(
     let mut constraints = constraints.clone();
     for i in 0..N {
         for j in 0..schedules[i].len() {
-            let to = schedules[i][j].job.from;
             if j == 0 {
                 constraints.push(Constraint::FirstJob(schedules[i][j].job.idx));
             } else {
@@ -466,9 +465,9 @@ fn eval_schedules(
                     &schedules[mp[prev_job_i].0][mp[prev_job_i].1],
                     &schedules[mp[next_job_i].0][mp[next_job_i].1],
                 );
-                let duration = dist(prev_s.job.to, next_s.job.from) + 2;
-                if prev_s.end_t + duration > next_s.start_t {
-                    penalty += prev_s.end_t + duration - next_s.start_t;
+                let interval = dist(prev_s.job.to, next_s.job.from) + 1;
+                if prev_s.end_t + interval > next_s.start_t {
+                    penalty += prev_s.end_t + interval - next_s.start_t;
                     assert!(
                         penalty < 1_000_000_000_000,
                         "{:?} {:?} {:?}",
@@ -480,18 +479,18 @@ fn eval_schedules(
             }
             Constraint::FirstJob(job_i) => {
                 let s = &schedules[mp[job_i].0][mp[job_i].1];
-                let duration = dist((input.c_to_a_ij[s.job.c].0, 0), s.job.from);
-                if s.start_t < duration {
-                    penalty += duration - s.start_t;
+                let interval = dist((mp[job_i].0, 0), s.job.from);
+                if s.start_t < interval {
+                    penalty += interval - s.start_t;
                     assert!(penalty < 1_000_000_000_000, "{:?} {:?}", c, s);
                 }
             }
             Constraint::Job(job_i) => {
                 let s = &schedules[mp[job_i].0][mp[job_i].1];
-                let duration = dist(s.job.from, s.job.to) + 2;
+                let interval = dist(s.job.from, s.job.to) + 2;
                 assert_eq!(s.job.idx, job_i);
-                if s.start_t + duration > s.end_t {
-                    penalty += s.start_t + duration - s.end_t;
+                if s.start_t + interval > s.end_t {
+                    penalty += s.start_t + interval - s.end_t;
                     assert!(penalty < 1_000_000_000_000, "{:?}", s);
                 }
             }
@@ -721,10 +720,6 @@ impl State {
                     &state.crane_log,
                     &state.container_occupations,
                 ) else {
-                    dbg!(ci, last_t, start_pos, &s);
-                    for t in last_t - 2..=s.start_t + 2 {
-                        state.print_t(t);
-                    }
                     state.crane_log[ci].extend(vec![PATH_NOT_FOUND; s.end_t - last_t - 1]);
                     state.crane_log[ci].push(s.job.to);
                     continue;
