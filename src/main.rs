@@ -40,133 +40,253 @@ fn main() {
     //     eprintln!("{:?}", job);
     // }
     // eprintln!("{}", jobs.len());
-    let state = State::initialize(jobs, &a);
-    // for t in 0..100 {
-    //     eprintln!("t={t}");
-    //     for i in 0..N {
-    //         for j in 0..N {
-    //             eprint!(" {:?}", state.container_occupations[t][i][j]);
-    //         }
-    //         eprintln!();
-    //     }
-    // }
-    // dbg!(&state.in_t, &state.out_t);
-    let state = optimize_state(state);
+    let (crane_schedules, container_occupations) = optimize_upper_level(jobs, &a);
+    let state = optimize_lower_level(crane_schedules, container_occupations);
     let moves = state.to_moves();
     output_ans(&moves);
+}
+
+fn jobs_to_schedules(jobs: Vec<Job>, cur_pos: (usize, usize), start_t: usize) -> Vec<Schedule> {
+    let mut cur_pos = cur_pos;
+    let mut cur_t = 0;
+    let mut schedules = vec![];
+    for job in jobs {
+        cur_t += cur_pos.0.abs_diff(job.from.0) + cur_pos.1.abs_diff(job.from.1);
+        let start_t = cur_t;
+        cur_t += 1; // P
+        cur_t += job.from.0.abs_diff(job.to.0) + job.from.1.abs_diff(job.to.1);
+        let end_t = cur_t;
+        cur_t += 1; // Q
+        cur_pos = job.to;
+        schedules.push(Schedule {
+            start_t,
+            end_t,
+            job,
+        })
+    }
+    schedules
+}
+
+/// 評価関数（移動経路とクレーンの衝突を無視したシミュレーション）
+fn eval_schedules(
+    schedules: &Vec<Vec<Schedule>>,
+    a: &Vec<Vec<usize>>,
+) -> (i64, Vec<Vec<Vec<Option<usize>>>>) {
+    let mut container_occupations = vec![vec![vec![None; N]; N]; MAX_T];
+    for ci in 0..N {}
+
+    (0, container_occupations)
+}
+
+fn optimize_upper_level(
+    jobs: Vec<Job>,
+    a: &Vec<Vec<usize>>,
+) -> (Vec<Vec<Schedule>>, Vec<Vec<Vec<Option<usize>>>>) {
+    let mut schedules: Vec<Vec<Schedule>> = vec![vec![]; N];
+    schedules[0] = jobs_to_schedules(jobs, (0, 0), 0);
+    let (_, container_occupations) = eval_schedules(&schedules, a, false);
+    (schedules, container_occupations)
+}
+
+fn optimize_lower_level(
+    crane_schedules: Vec<Vec<Schedule>>,
+    container_occupations: Vec<Vec<Vec<Option<usize>>>>,
+) -> State {
+    let mut state = State::initialize(crane_schedules, container_occupations);
+    state
 }
 
 #[derive(Clone, Copy, Debug)]
 struct Schedule {
     start_t: usize,
     end_t: usize,
-    job_i: usize,
+    job: Job,
 }
 
-fn optimize_state(mut state: State) -> State {
-    move_job(&mut state);
-    state
+fn is_moveable(
+    ci: usize,
+    t: usize,
+    v: (usize, usize),
+    d: (usize, usize),
+    crane_log: &Vec<Vec<(usize, usize)>>,
+    container_occupations: &Vec<Vec<Vec<Option<usize>>>>,
+) -> bool {
+    let (ni, nj) = (v.0 + d.0, v.1 + d.1);
+    if ni >= N || nj >= N {
+        return false;
+    }
+    if container_occupations[t + 1][ni][nj].is_some() {
+        return false;
+    }
+    for cj in 0..N {
+        if ci == cj {
+            continue;
+        }
+        if t + 1 >= crane_log[cj].len() {
+            continue;
+        }
+        if crane_log[cj][t + 1] == (ni, nj) {
+            return false;
+        }
+        if crane_log[cj][t] == (ni, nj) && crane_log[cj][t + 1] == v {
+            return false;
+        }
+    }
+    true
 }
 
-fn move_job(state: &mut State) {
-    let (ci_from, ci_to) = (0, rnd::gen_range(1, N));
-    let s_from = rnd::gen_index(state.crane_schedules[ci_from].len());
-    let job_i = state.crane_schedules[ci_from][s_from].job_i;
-    // let t_to = rnd::gen_index(state.crane_schedules[ci_to].len() / 2 + 1) * 2;
-    let s_to = {
-        let mut ret = state.crane_schedules[ci_to].len();
-        for (i, s) in state.crane_schedules[ci_to].iter().enumerate() {
-            if job_i > s.job_i {
-                ret = i;
-                break;
+fn find_path_for_schedule(
+    ci: usize,
+    last_t: usize,
+    start_pos: (usize, usize),
+    s: &Schedule,
+    path_finder: &mut PathFinder,
+    crane_log: &Vec<Vec<(usize, usize)>>,
+    container_occupations: &Vec<Vec<Vec<Option<usize>>>>,
+) -> Vec<(usize, usize)> {
+    let mut path = vec![];
+
+    // last_t -> s.start_t の間に start_pos -> s.job.from に移動する
+    let path1 = path_finder.find_path(
+        ci,
+        last_t,
+        s.start_t,
+        start_pos,
+        s.job.from,
+        &crane_log,
+        &container_occupations,
+    );
+    path.extend(path1.unwrap());
+    path.push(s.job.from); // P
+
+    // s.start_t + 1 -> s.end_t の間に s.job.from -> s.job.to に移動する
+    let path2 = path_finder.find_path(
+        ci,
+        s.start_t + 1,
+        s.end_t,
+        s.job.from,
+        s.job.to,
+        &crane_log,
+        &container_occupations,
+    );
+    path.extend(path2.unwrap());
+    path.push(s.job.to); // Q
+
+    path
+}
+
+struct PathFinder {
+    id: usize,
+    dp: Vec<Vec<Vec<usize>>>, // id
+}
+
+impl PathFinder {
+    fn new() -> PathFinder {
+        PathFinder {
+            id: 0,
+            dp: vec![vec![vec![0; N]; N]; MAX_T],
+        }
+    }
+
+    /// start_tにfromから開始して、end_tにtoに居るような経路を探索する
+    fn find_path(
+        &mut self,
+        ci: usize,
+        start_t: usize,
+        end_t: usize,
+        from: (usize, usize),
+        to: (usize, usize),
+        crane_log: &Vec<Vec<(usize, usize)>>,
+        container_occupations: &Vec<Vec<Vec<Option<usize>>>>,
+    ) -> Option<Vec<(usize, usize)>> {
+        self.id += 1;
+        self.dp[start_t][from.0][from.1] = self.id;
+        for t in start_t..end_t {
+            for i in 0..N {
+                for j in 0..N {
+                    if self.dp[t][i][j] != self.id {
+                        continue;
+                    }
+                    for d in D {
+                        if !is_moveable(ci, t, (i, j), d, crane_log, container_occupations) {
+                            continue;
+                        }
+                        self.dp[t + 1][i + d.0][j + d.1] = self.id;
+                    }
+                }
             }
         }
-        ret
-    };
 
-    // ci_fromのs-1からs+1までの経路を再探索する
-    // state.crane_log[state.crane_schedules[s-1].end_t:]
+        // NOTE: 最後に拾う・落とすなどの操作をするため、時刻t+1に留まることができるか調べる必要がある？
+        if self.dp[end_t][to.0][to.1] != self.id {
+            return None;
+        }
+        Some(self.restore_path(start_t, end_t, from, to))
+    }
+
+    fn restore_path(
+        &self,
+        start_t: usize,
+        end_t: usize,
+        from: (usize, usize),
+        to: (usize, usize),
+    ) -> Vec<(usize, usize)> {
+        let mut path = vec![];
+        let mut cur = to;
+        let mut cur_t = end_t;
+        while cur != from || start_t != cur_t {
+            cur_t -= 1;
+            for &(di, dj) in REV_D.iter() {
+                let (ni, nj) = (cur.0 + di, cur.1 + dj);
+                if ni >= N || nj >= N {
+                    continue;
+                }
+                if self.dp[cur_t][ni][nj] == self.id {
+                    path.push(cur);
+                    cur = (ni, nj);
+                    break;
+                }
+            }
+        }
+        path.reverse();
+        path
+    }
 }
 
 struct State {
     crane_log: Vec<Vec<(usize, usize)>>,
     crane_schedules: Vec<Vec<Schedule>>,
     container_occupations: Vec<Vec<Vec<Option<usize>>>>,
-    in_t: Vec<Vec<usize>>,
-    out_t: Vec<Vec<usize>>,
-    c_to_in_ij: Vec<(usize, usize)>,
-    jobs: Vec<Job>,
+    path_finder: PathFinder,
 }
 
 impl State {
-    fn initialize(jobs: Vec<Job>, a: &Vec<Vec<usize>>) -> State {
-        let mut c_to_in_ij = vec![(0, 0); N * N];
-        for (i, j) in iproduct!(0..N, 0..N) {
-            c_to_in_ij[a[i][j]] = (i, j);
-        }
-
-        // 初期解は全てクレーン0にアサインする
-        // TODO: 初期界を貪欲法で作る
-        let mut crane_log: Vec<Vec<(usize, usize)>> = (0..N).map(|i| vec![(i, 0)]).collect();
-        let mut crane_schedules = vec![vec![]; N];
-        let mut container_occupations = vec![vec![vec![None; N]; N]; MAX_T];
-        let mut in_t = vec![vec![0; N]; N];
-        let mut out_t = vec![vec![0; N]; N];
-
-        for (t, i) in iproduct!(0..MAX_T, 0..N) {
-            // 搬入口はコンテナを持った小クレーンは通れなくする
-            // TODO: 搬入口のコンテナ状況も更新する
-            container_occupations[t][i][0] = Some(N * N);
-        }
-
-        let mut cur_pos = (0, 0);
-        for (job_i, job) in jobs.iter().enumerate() {
-            let path = get_straight_path(cur_pos, job.from);
-            crane_log[0].extend(path);
-            let start_t = crane_log[0].len();
-            if job.is_in_job() {
-                let (i, j) = c_to_in_ij[job.c];
-                in_t[i][j] = crane_log[0].len();
-            } else {
-                for t in crane_log[0].len()..MAX_T {
-                    container_occupations[t][job.from.0][job.from.1] = None;
-                }
-            }
-            crane_log[0].push(job.from); // P
-
-            let path = get_straight_path(job.from, job.to);
-            crane_log[0].extend(path);
-            let end_t = crane_log[0].len();
-            crane_schedules[0].push(Schedule {
-                start_t,
-                end_t,
-                job_i,
-            });
-            if job.is_out_job() {
-                let (i, j) = (job.c / N, job.c % N);
-                out_t[i][j] = crane_log[0].len();
-            } else {
-                for t in crane_log[0].len()..MAX_T {
-                    container_occupations[t][job.to.0][job.to.1] = Some(job.c);
-                }
-            }
-            crane_log[0].push(job.to); // Q
-
-            cur_pos = job.to;
-        }
-
-        State {
-            crane_log,
+    fn initialize(
+        crane_schedules: Vec<Vec<Schedule>>,
+        container_occupations: Vec<Vec<Vec<Option<usize>>>>,
+    ) -> State {
+        let mut state = State {
+            crane_log: (0..N).map(|ci| vec![(ci, 0)]).collect(),
             crane_schedules,
             container_occupations,
-            in_t,
-            out_t,
-            c_to_in_ij,
-            jobs,
+            path_finder: PathFinder::new(),
+        };
+        for ci in 0..N {
+            for s in state.crane_schedules[ci].iter() {
+                let path = find_path_for_schedule(
+                    ci,
+                    state.crane_log[ci].len() - 1,
+                    *state.crane_log[ci].last().unwrap(),
+                    s,
+                    &mut state.path_finder,
+                    &state.crane_log,
+                    &state.container_occupations,
+                );
+                state.crane_log[ci].extend(path);
+            }
         }
+        state
     }
-
-    fn find_new_path(&self, ci: usize, t: usize, from: (usize, usize), to: (usize, usize)) {}
 
     fn to_moves(&self) -> Vec<Vec<Move>> {
         let mut moves = vec![vec![]; N];
@@ -233,32 +353,6 @@ fn get_straight_path(from: (usize, usize), to: (usize, usize)) -> Vec<(usize, us
         );
     }
     v
-}
-
-struct PathFinder {
-    id: usize,
-    dp: Vec<Vec<Vec<usize>>>,
-}
-
-impl PathFinder {
-    fn new() -> PathFinder {
-        PathFinder {
-            id: 0,
-            dp: vec![vec![vec![0; N]; N]; MAX_T],
-        }
-    }
-
-    fn find_path(
-        &mut self,
-        ci: usize,
-        t: usize,
-        from: (usize, usize),
-        to: (usize, usize),
-        crane_log: Vec<Vec<(usize, usize)>>,
-        container_occupations: Vec<Vec<Vec<Option<usize>>>>,
-    ) {
-        self.id += 1;
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -375,40 +469,6 @@ fn listup_valid_moves(
     //     }
     // }
     panic!();
-}
-
-fn dump_tiles(tiles: &Vec<Vec<TileStatus>>) {
-    for i in 0..N {
-        for j in 0..N {
-            match tiles[i][j] {
-                TileStatus::Empty => eprint!("."),
-                TileStatus::Container => eprint!("c"),
-                TileStatus::Crane(ci) => eprint!("{ci}"),
-            }
-        }
-        eprintln!();
-    }
-}
-
-fn get_moves_for_task(
-    tiles: &Vec<Vec<Vec<TileStatus>>>,
-    t: usize,
-    cur_pos: (usize, usize),
-    job: &Job,
-    is_crane_zero: bool,
-) -> Vec<Move> {
-    let mut moves = vec![];
-    moves.extend(listup_valid_moves(tiles, t, cur_pos, job.from, true));
-    moves.push(Move::Pick);
-    moves.extend(listup_valid_moves(
-        tiles,
-        t + moves.len(),
-        job.from,
-        job.to,
-        is_crane_zero,
-    ));
-    moves.push(Move::Drop);
-    moves
 }
 
 fn listup_jobs(a: &Vec<Vec<usize>>) -> Vec<Job> {
@@ -547,6 +607,7 @@ fn convert_in_order_and_in_place_to_jobs(
         // 搬出できる場合は直接搬出する
         if out_count[out_i] == out_j {
             jobs.push(Job {
+                idx: jobs.len(),
                 c,
                 from: (i, 0),
                 to: (out_i, N - 1),
@@ -555,6 +616,7 @@ fn convert_in_order_and_in_place_to_jobs(
             out_j += 1;
         } else {
             jobs.push(Job {
+                idx: jobs.len(),
                 c,
                 from: (i, 0),
                 to: (pi, pj),
@@ -571,6 +633,7 @@ fn convert_in_order_and_in_place_to_jobs(
             // (pi, pj) := in_place[c]
             let (pi, pj) = in_place[c];
             jobs.push(Job {
+                idx: jobs.len(),
                 c,
                 from: (pi, pj),
                 to: (out_i, N - 1),
@@ -587,6 +650,7 @@ fn convert_in_order_and_in_place_to_jobs(
 
 #[derive(Clone, Copy, Debug)]
 struct Job {
+    idx: usize,
     c: usize,
     from: (usize, usize),
     to: (usize, usize),
