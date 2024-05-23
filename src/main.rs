@@ -56,7 +56,9 @@ fn main() {
     //     eprintln!("{:?}", job);
     // }
     // eprintln!("{}", jobs.len());
+    eprintln!("{}", time::elapsed_seconds());
     let (crane_schedules, container_occupations) = optimize_upper_level(jobs, &input);
+    eprintln!("{}", time::elapsed_seconds());
     let state = optimize_lower_level(crane_schedules, container_occupations);
 
     let moves = state.to_moves();
@@ -192,6 +194,7 @@ fn optimize_upper_level(
     let mut assigned_jobs: Vec<Vec<Job>> = vec![vec![]; N];
     for job in jobs.iter() {
         assigned_jobs[rnd::gen_index(N)].push(job.clone());
+        // assigned_jobs[0].push(job.clone());
     }
 
     let mut schedules = jobs_to_schedules(assigned_jobs);
@@ -511,6 +514,46 @@ fn optimize_lower_level(
     container_occupations: Vec<Vec<Vec<Option<usize>>>>,
 ) -> State {
     let mut state = State::initialize(crane_schedules, container_occupations);
+    for _t in 0..1 {
+        let ci = rnd::gen_index(N);
+        let j = rnd::gen_index(state.path_info[ci].len());
+        let ((l, r), prev_cost, over_container) = state.path_info[ci][j];
+        let (path, cost) = state.path_finder.find_path(
+            ci,
+            l,
+            r,
+            state.crane_log[ci][l],
+            state.crane_log[ci][r],
+            over_container,
+            &state.crane_log,
+            &state.container_occupations,
+        );
+        if cost > 0 {
+            for t in l - 3..=r {
+                state.print_t(t);
+            }
+            dbg!(
+                l,
+                r,
+                &path,
+                cost,
+                ci,
+                over_container,
+                (l..=r)
+                    .map(|i| state.crane_log[ci][i])
+                    .collect::<Vec<(usize, usize)>>()
+            );
+        }
+        let new_score = state.score - prev_cost + cost;
+        if new_score <= state.score {
+            // eprintln!("[{_t}] {} -> {}", state.score, new_score);
+            for t in l + 1..=r {
+                state.crane_log[ci][t] = path[t - (l + 1)];
+                state.path_info[ci][j].1 = cost;
+            }
+            state.score = new_score;
+        }
+    }
     state
 }
 
@@ -552,53 +595,6 @@ fn move_cost(
     collide
 }
 
-fn find_path_for_schedule(
-    ci: usize,
-    last_t: usize,
-    start_pos: (usize, usize),
-    s: &Schedule,
-    path_finder: &mut PathFinder,
-    crane_log: &Vec<Vec<(usize, usize)>>,
-    container_occupations: &Vec<Vec<Vec<Option<usize>>>>,
-) -> (Vec<(usize, usize)>, usize) {
-    let mut path = vec![];
-    let mut cost = 0;
-
-    // last_t -> s.start_t の間に start_pos -> s.job.from に移動する
-    let (path1, cost1) = path_finder.find_path(
-        ci,
-        last_t,
-        s.start_t,
-        start_pos,
-        s.job.from,
-        true,
-        &crane_log,
-        &container_occupations,
-    );
-    path.extend(path1);
-    cost += cost1;
-    path.push(s.job.from); // P
-
-    // s.start_t + 1 -> s.end_t - 1の間に s.job.from -> s.job.to に移動する
-    let (path2, cost2) = path_finder.find_path(
-        ci,
-        s.start_t + 1,
-        s.end_t,
-        s.job.from,
-        s.job.to,
-        ci == 0,
-        &crane_log,
-        &container_occupations,
-    );
-    path.extend(path2);
-    cost += cost2;
-    path.push(s.job.to); // Q
-
-    (path, cost)
-}
-
-const PATH_NOT_FOUND: (usize, usize) = (N, N);
-
 struct PathFinder {
     id: usize,
     dp: Vec<Vec<Vec<(usize, usize)>>>, // id
@@ -623,7 +619,7 @@ impl PathFinder {
         over_container: bool,
         crane_log: &Vec<Vec<(usize, usize)>>,
         container_occupations: &Vec<Vec<Vec<Option<usize>>>>,
-    ) -> (Vec<(usize, usize)>, usize) {
+    ) -> (Vec<(usize, usize)>, i64) {
         self.id += 1;
         self.dp[start_t][from.0][from.1] = (self.id, 0);
         for t in start_t..end_t {
@@ -661,7 +657,7 @@ impl PathFinder {
         assert_eq!(self.dp[end_t][to.0][to.1].0, self.id);
         (
             self.restore_path(start_t, end_t, from, to),
-            self.dp[end_t][to.0][to.1].1,
+            self.dp[end_t][to.0][to.1].1 as i64,
         )
     }
 
@@ -710,8 +706,10 @@ impl PathFinder {
 struct State {
     crane_log: Vec<Vec<(usize, usize)>>,
     crane_schedules: Vec<Vec<Schedule>>,
+    path_info: Vec<Vec<((usize, usize), i64, bool)>>,
     container_occupations: Vec<Vec<Vec<Option<usize>>>>,
     path_finder: PathFinder,
+    score: i64,
 }
 
 impl State {
@@ -722,30 +720,49 @@ impl State {
         let mut state = State {
             crane_log: (0..N).map(|ci| vec![(ci, 0)]).collect(),
             crane_schedules,
+            path_info: vec![vec![]; N],
             container_occupations,
             path_finder: PathFinder::new(),
+            score: 0,
         };
-        for ci in 0..N {
+        for ci in (0..N).rev() {
             for s in state.crane_schedules[ci].iter() {
                 let last_t = state.crane_log[ci].len() - 1;
                 let start_pos = *state.crane_log[ci].last().unwrap();
-                let (path, cost) = find_path_for_schedule(
+
+                // last_t -> s.start_t の間に start_pos -> s.job.from に移動する
+                let (path1, cost1) = state.path_finder.find_path(
                     ci,
                     last_t,
+                    s.start_t,
                     start_pos,
-                    s,
-                    &mut state.path_finder,
+                    s.job.from,
+                    true,
                     &state.crane_log,
                     &state.container_occupations,
                 );
-                state.crane_log[ci].extend(path);
-                assert_eq!(
-                    s.end_t + 2,
-                    state.crane_log[ci].len(),
-                    "{:?} {:?}",
-                    s,
-                    state.crane_log[ci]
+                state.crane_log[ci].extend(path1);
+                state.crane_log[ci].push(s.job.from); // P
+                state.path_info[ci].push(((last_t, s.start_t), cost1, true));
+                state.score += cost1;
+
+                // s.start_t + 1 -> s.end_t - 1の間に s.job.from -> s.job.to に移動する
+                let (path2, cost2) = state.path_finder.find_path(
+                    ci,
+                    s.start_t + 1,
+                    s.end_t,
+                    s.job.from,
+                    s.job.to,
+                    ci == 0,
+                    &state.crane_log,
+                    &state.container_occupations,
                 );
+                state.crane_log[ci].extend(path2);
+                state.crane_log[ci].push(s.job.to); // Q
+                state.path_info[ci].push(((s.start_t + 1, s.end_t), cost2, ci == 0));
+                state.score += cost2;
+
+                assert_eq!(s.end_t + 2, state.crane_log[ci].len(),);
             }
         }
         state
@@ -781,36 +798,34 @@ impl State {
         for i in 0..N {
             for j in 0..N {
                 if let Some(c) = self.container_occupations[t][i][j] {
-                    eprint!("{:2}", c);
+                    eprint!(" {:2}", c);
                 } else {
-                    eprint!("..");
+                    eprint!("  .");
                 }
             }
             eprintln!();
         }
         eprintln!();
-        eprintln!("t={};", t);
-        let mut a = vec![vec![N; N]; N];
-        for ci in 0..N {
-            if t >= self.crane_log[ci].len() {
-                continue;
-            }
-            let v = self.crane_log[ci][t];
-            if v != PATH_NOT_FOUND {
-                a[v.0][v.1] = ci;
-            }
-        }
-        for i in 0..N {
-            for j in 0..N {
-                if a[i][j] != N {
-                    eprint!("{}", a[i][j]);
-                } else {
-                    eprint!(".");
-                }
-            }
-            eprintln!();
-        }
-        eprintln!()
+        // eprintln!("t={};", t);
+        // let mut a = vec![vec![N; N]; N];
+        // for ci in 0..N {
+        //     if t >= self.crane_log[ci].len() {
+        //         continue;
+        //     }
+        //     let v = self.crane_log[ci][t];
+        //     a[v.0][v.1] = ci;
+        // }
+        // for i in 0..N {
+        //     for j in 0..N {
+        //         if a[i][j] != N {
+        //             eprint!("{}", a[i][j]);
+        //         } else {
+        //             eprint!(".");
+        //         }
+        //     }
+        //     eprintln!();
+        // }
+        // eprintln!()
     }
 }
 
