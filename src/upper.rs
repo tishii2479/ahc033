@@ -1,3 +1,5 @@
+use itertools::iproduct;
+
 use crate::def::*;
 use crate::helper::*;
 use crate::util::*;
@@ -6,20 +8,33 @@ pub fn optimize_upper_level(
     jobs: Vec<Job>,
     input: &Input,
 ) -> (Vec<Vec<Schedule>>, Vec<Vec<Vec<Option<usize>>>>) {
+    let mut path_finder = PathFinder::new();
     let constraints = create_constraints(&jobs, input);
     let mut assigned_jobs: Vec<Vec<Job>> = vec![vec![]; N];
     for job in jobs.iter() {
         assigned_jobs[rnd::gen_index(N)].push(job.clone());
         // assigned_jobs[0].push(job.clone());
     }
-
     let mut schedules = jobs_to_schedules(assigned_jobs);
-    let mut cur_score = eval_schedules(&schedules, &constraints, &jobs);
+    let mut cur_score = eval_schedules(&schedules, &constraints, &jobs, &mut path_finder);
     eprintln!("[start]  upper-level-score: {}", cur_score);
 
-    for _t in 0..100_000 {
+    let iteration = 100_000;
+    for _t in 0..iteration {
         let p = rnd::nextf();
-        let threshold = if cur_score > 1_000_000 { 1_000 } else { 1 };
+        let start_temp = if cur_score > 1_000_000 {
+            10_000
+        } else if cur_score > 1000 {
+            100
+        } else {
+            10
+        } as f64;
+        let progress = _t as f64 / iteration as f64;
+        let cur_temp = start_temp.powf(1. - progress);
+        let threshold = -(cur_temp * progress) * rnd::nextf().ln();
+        let threshold = threshold.round() as i64;
+        // dbg!(cur_score, threshold);
+        // let threshold = if cur_score > 1_000_000 { 1_000 } else { 1 };
         if p < 0.2 {
             // 1. 一つのスケジュールの時間を伸ばす・減らす
             let ci = rnd::gen_index(N);
@@ -38,15 +53,15 @@ pub fn optimize_upper_level(
                     s.end_t += d;
                 }
             }
-            let new_score = eval_schedules(&schedules, &constraints, &jobs);
+            let new_score = eval_schedules(&schedules, &constraints, &jobs, &mut path_finder);
 
             if new_score - cur_score < threshold {
                 cur_score = new_score;
-                // eprintln!("[{_t}] {} -> {}", cur_score, new_score);
+                eprintln!("[{_t}] {} -> {}", cur_score, new_score);
             } else {
                 schedules[ci] = a;
             }
-        } else if p < 0.4 {
+        } else if p < 0.6 {
             // 一つのコンテナの置く位置を変更する
             let c = rnd::gen_index(N * N);
             let mut prev_p = None;
@@ -68,9 +83,9 @@ pub fn optimize_upper_level(
             }
             let Some(prev_p) = prev_p else { continue };
 
-            let new_score = eval_schedules(&schedules, &constraints, &jobs);
+            let new_score = eval_schedules(&schedules, &constraints, &jobs, &mut path_finder);
             if new_score - cur_score < threshold {
-                // eprintln!("[{_t}] {} -> {}", cur_score, new_score);
+                eprintln!("[{_t}] {} -> {}", cur_score, new_score);
                 cur_score = new_score;
             } else {
                 for i in 0..N {
@@ -87,7 +102,7 @@ pub fn optimize_upper_level(
                     }
                 }
             }
-        } else if p < 0.6 {
+        } else if p < 0.8 {
             // 3. 一つのジョブを移動する
             let (ci, cj) = (rnd::gen_index(N), rnd::gen_index(N));
             if ci == cj || schedules[ci].len() == 0 {
@@ -100,15 +115,15 @@ pub fn optimize_upper_level(
             let s = schedules[ci].remove(si);
             schedules[cj].insert(sj, s);
 
-            let new_score = eval_schedules(&schedules, &constraints, &jobs);
+            let new_score = eval_schedules(&schedules, &constraints, &jobs, &mut path_finder);
             if new_score - cur_score < threshold {
-                // eprintln!("[{_t}] {} -> {}", cur_score, new_score);
+                eprintln!("[{_t}] {} -> {}", cur_score, new_score);
                 cur_score = new_score;
             } else {
                 let s = schedules[cj].remove(sj);
                 schedules[ci].insert(si, s);
             }
-        } else if p < 0.8 {
+        } else if p < 0.9 {
             // 4. クレーン間でジョブをスワップする
             let (ci, cj) = (rnd::gen_index(N), rnd::gen_index(N));
             if ci == cj || schedules[ci].len() == 0 || schedules[cj].len() == 0 {
@@ -121,10 +136,10 @@ pub fn optimize_upper_level(
             (schedules[ci][si].job, schedules[cj][sj].job) =
                 (schedules[cj][sj].job, schedules[ci][si].job);
 
-            let new_score = eval_schedules(&schedules, &constraints, &jobs);
+            let new_score = eval_schedules(&schedules, &constraints, &jobs, &mut path_finder);
             if new_score - cur_score < threshold {
                 cur_score = new_score;
-                // eprintln!("[{_t}] {} -> {}", cur_score, new_score);
+                eprintln!("[{_t}] {} -> {}", cur_score, new_score);
             } else {
                 (schedules[ci][si].job, schedules[cj][sj].job) =
                     (schedules[cj][sj].job, schedules[ci][si].job);
@@ -145,10 +160,10 @@ pub fn optimize_upper_level(
             (schedules[ci][si].job, schedules[ci][sj].job) =
                 (schedules[ci][sj].job, schedules[ci][si].job);
 
-            let new_score = eval_schedules(&schedules, &constraints, &jobs);
+            let new_score = eval_schedules(&schedules, &constraints, &jobs, &mut path_finder);
             if new_score - cur_score < threshold {
                 cur_score = new_score;
-                // eprintln!("[{_t}] {} -> {}", cur_score, new_score);
+                eprintln!("[{_t}] {} -> {}", cur_score, new_score);
             } else {
                 (schedules[ci][si].job, schedules[ci][sj].job) =
                     (schedules[ci][sj].job, schedules[ci][si].job);
@@ -157,8 +172,31 @@ pub fn optimize_upper_level(
         // 2. 一時点のスケジュールを全てのクレーンで伸ばす
     }
 
+    let container_occupations = create_container_occupations(&schedules);
+    for (i, j) in iproduct!(0..N, 0..N) {
+        eprintln!("{} {}, {:?}", i, j, container_occupations[i][j]);
+    }
+    eprintln!("{}", jobs.len());
+    for ci in 1..N {
+        for s in schedules[ci].iter() {
+            // s.start_t + 1 -> s.end_tにs.job.from -> s.job.toへの経路が存在するかどうか
+            // 存在しない場合、衝突したコンテナの個数をペナルティとして加える
+            let a = path_finder.find_path_easy(
+                s.start_t + 1,
+                s.end_t,
+                s.job.from,
+                s.job.to,
+                &container_occupations,
+                true,
+            );
+            if a > 0 {
+                dbg!(ci, a, s);
+            }
+        }
+    }
+
     eprintln!("[end]    upper-level-score: {}", cur_score);
-    assert!(eval_schedules(&schedules, &constraints, &jobs) < 1_000);
+    assert!(eval_schedules(&schedules, &constraints, &jobs, &mut path_finder) < 1_000);
     let container_occupations = create_container_occupations_tensor(&schedules, input);
     (schedules, container_occupations)
 }
@@ -167,6 +205,7 @@ fn eval_schedules(
     schedules: &Vec<Vec<Schedule>>,
     constraints: &Vec<Constraint>,
     jobs: &Vec<Job>,
+    path_finder: &mut PathFinder,
 ) -> i64 {
     let raw_score = (0..N)
         .filter(|&ci| schedules[ci].len() > 0)
@@ -175,16 +214,50 @@ fn eval_schedules(
         .unwrap() as i64;
     // TODO: 必要なところまで計算する
     let constraint_penalty = eval_constraints(schedules, &constraints, jobs);
+    if constraint_penalty > 0 {
+        return raw_score + constraint_penalty * 1_000_000;
+    }
 
     let container_occupations = create_container_occupations(schedules);
     let container_occupation_penalty = eval_container_occupation(&container_occupations);
 
-    let schedule_feasibility_penalty = eval_schedule_feasibility(schedules, &container_occupations);
+    let schedule_feasibility_penalty =
+        eval_schedule_feasibility(schedules, &container_occupations, path_finder);
 
+    // dbg!(
+    //     raw_score,
+    //     constraint_penalty,
+    //     container_occupation_penalty,
+    //     schedule_feasibility_penalty
+    // );
     raw_score
         + constraint_penalty * 1_000_000
         + container_occupation_penalty * 1_000
         + schedule_feasibility_penalty * 1_000
+}
+
+fn eval_schedule_feasibility(
+    schedules: &Vec<Vec<Schedule>>,
+    container_occupations: &Vec<Vec<Vec<(usize, usize, usize)>>>,
+    path_finder: &mut PathFinder,
+) -> i64 {
+    let mut penalty = 0;
+    // クレーン0はチェックする必要がない
+    for ci in 1..N {
+        for s in schedules[ci].iter() {
+            // s.start_t + 1 -> s.end_tにs.job.from -> s.job.toへの経路が存在するかどうか
+            // 存在しない場合、衝突したコンテナの個数をペナルティとして加える
+            penalty += path_finder.find_path_easy(
+                s.start_t + 1,
+                s.end_t,
+                s.job.from,
+                s.job.to,
+                container_occupations,
+                false,
+            );
+        }
+    }
+    penalty as i64
 }
 
 fn eval_container_occupation(occupations: &Vec<Vec<Vec<(usize, usize, usize)>>>) -> i64 {
@@ -276,7 +349,8 @@ fn eval_constraints(
                     &schedules[mp[prev_job_i].0][mp[prev_job_i].1],
                     &schedules[mp[next_job_i].0][mp[next_job_i].1],
                 );
-                let interval = dist(prev_s.job.to, next_s.job.from) + 1;
+                // let interval = dist(prev_s.job.to, next_s.job.from) + 1;
+                let interval = dist(prev_s.job.to, next_s.job.from) + 10;
                 if prev_s.end_t + interval > next_s.start_t {
                     penalty += prev_s.end_t + interval - next_s.start_t;
                     assert!(
@@ -291,6 +365,7 @@ fn eval_constraints(
             Constraint::FirstJob(job_i) => {
                 let s = &schedules[mp[job_i].0][mp[job_i].1];
                 let interval = dist((mp[job_i].0, 0), s.job.from);
+                let interval = dist((mp[job_i].0, 0), s.job.from) + 10;
                 if s.start_t < interval {
                     penalty += interval - s.start_t;
                     assert!(penalty < 1_000_000_000_000, "{:?} {:?}", c, s);
@@ -299,6 +374,7 @@ fn eval_constraints(
             Constraint::Job(job_i) => {
                 let s = &schedules[mp[job_i].0][mp[job_i].1];
                 let interval = dist(s.job.from, s.job.to) + 2;
+                let interval = dist(s.job.from, s.job.to) + 10;
                 assert_eq!(s.job.idx, job_i);
                 if s.start_t + interval > s.end_t {
                     penalty += s.start_t + interval - s.end_t;
@@ -309,20 +385,6 @@ fn eval_constraints(
     }
 
     penalty as i64
-}
-
-fn eval_schedule_feasibility(
-    schedules: &Vec<Vec<Schedule>>,
-    container_occupations: &Vec<Vec<Vec<(usize, usize, usize)>>>,
-) -> i64 {
-    let mut penalty = 0;
-    for ci in 0..N {
-        for s in schedules[ci].iter() {
-            // s.start_t + 1 -> s.end_tにs.job.from -> s.job.toへの経路が存在するかどうか
-            // 存在しない場合、衝突したコンテナの個数をペナルティとして加える
-        }
-    }
-    penalty
 }
 
 fn create_constraints(jobs: &Vec<Job>, input: &Input) -> Vec<Constraint> {

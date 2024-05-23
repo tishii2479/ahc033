@@ -7,7 +7,8 @@ pub fn optimize_lower_level(
     container_occupations: Vec<Vec<Vec<Option<usize>>>>,
 ) -> Vec<Vec<Move>> {
     let mut state = State::initialize(crane_schedules, container_occupations);
-    for _t in 0..1 {
+    dbg!(state.score);
+    for _t in 0..0 {
         let ci = rnd::gen_index(N);
         let j = rnd::gen_index(state.path_info[ci].len());
         let ((l, r), prev_cost, over_container) = state.path_info[ci][j];
@@ -21,22 +22,22 @@ pub fn optimize_lower_level(
             &state.crane_log,
             &state.container_occupations,
         );
-        if cost > 0 {
-            for t in l - 3..=r {
-                state.print_t(t);
-            }
-            dbg!(
-                l,
-                r,
-                &path,
-                cost,
-                ci,
-                over_container,
-                (l..=r)
-                    .map(|i| state.crane_log[ci][i])
-                    .collect::<Vec<(usize, usize)>>()
-            );
-        }
+        // if cost > 0 {
+        //     for t in l - 3..=r {
+        //         state.print_t(t);
+        //     }
+        //     dbg!(
+        //         l,
+        //         r,
+        //         &path,
+        //         cost,
+        //         ci,
+        //         over_container,
+        //         (l..=r)
+        //             .map(|i| state.crane_log[ci][i])
+        //             .collect::<Vec<(usize, usize)>>()
+        //     );
+        // }
         let new_score = state.score - prev_cost + cost;
         if new_score <= state.score {
             // eprintln!("[{_t}] {} -> {}", state.score, new_score);
@@ -111,6 +112,7 @@ impl State {
 
                 assert_eq!(s.end_t + 2, state.crane_log[ci].len(),);
             }
+            eprintln!("{ci}: {:?}", state.crane_log[ci]);
         }
         state
     }

@@ -30,6 +30,12 @@ fn main() {
     eprintln!("{}", time::elapsed_seconds());
     let (crane_schedules, container_occupations) = optimize_upper_level(jobs, &input);
     eprintln!("{}", time::elapsed_seconds());
+    for ci in 0..N {
+        eprintln!("ci={ci}:");
+        for s in crane_schedules[ci].iter() {
+            eprintln!("{:?}", s);
+        }
+    }
     let moves = optimize_lower_level(crane_schedules, container_occupations);
     output_ans(&moves);
 }

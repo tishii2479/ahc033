@@ -27,26 +27,75 @@ pub fn output_ans(moves: &Vec<Vec<Move>>) {
 
 pub struct PathFinder {
     id: usize,
-    dp: Vec<Vec<Vec<(usize, usize)>>>, // id
+    dp: Vec<Vec<Vec<(usize, usize, (usize, usize))>>>, // id, dist, par_p
 }
 
 impl PathFinder {
     pub fn new() -> PathFinder {
         PathFinder {
             id: 0,
-            dp: vec![vec![vec![(0, 0); N]; N]; MAX_T],
+            dp: vec![vec![vec![(0, 0, (0, 0)); N]; N]; MAX_T],
         }
     }
 
+    /// start_tにfromから開始して、end_tにtoに居るような経路を探索する
+    /// 衝突するコンテナの個数の最小数を返す
+    /// 到達できない場合はassertに引っかかる
     pub fn find_path_easy(
         &mut self,
         start_t: usize,
         end_t: usize,
         from: (usize, usize),
         to: (usize, usize),
-        container_occupations: &Vec<Vec<Vec<(usize, usize)>>>,
+        container_occupations: &Vec<Vec<Vec<(usize, usize, usize)>>>,
+        debug: bool,
     ) -> usize {
-        0
+        fn move_cost(
+            t: usize,
+            nv: (usize, usize),
+            container_occupations: &Vec<Vec<Vec<(usize, usize, usize)>>>,
+        ) -> usize {
+            let (ni, nj) = nv;
+            for &(l, r, _) in container_occupations[ni][nj].iter() {
+                if l < t && t <= r {
+                    return 1;
+                }
+            }
+            0
+        }
+
+        self.id += 1;
+        self.dp[start_t][from.0][from.1] = (self.id, 0, from);
+        for t in start_t..end_t {
+            for i in 0..N {
+                for j in 0..N {
+                    if self.dp[t][i][j].0 != self.id {
+                        continue;
+                    }
+                    for d in D {
+                        let (ni, nj) = (i + d.0, j + d.1);
+                        if ni >= N || nj >= N {
+                            continue;
+                        }
+                        let cost = move_cost(t + 1, (ni, nj), container_occupations);
+                        let next = self.dp[t][i][j].1 + cost;
+                        if self.dp[t + 1][i + d.0][j + d.1].0 != self.id
+                            || next < self.dp[t + 1][i + d.0][j + d.1].1
+                        {
+                            self.dp[t + 1][i + d.0][j + d.1] = (self.id, next, (i, j));
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(self.dp[end_t][to.0][to.1].0, self.id);
+        // if debug {
+        //     let path = self.restore_path(start_t, end_t, from, to);
+        //     for (dt, v) in path.iter().enumerate() {
+        //         eprintln!("{:?} {:?}", v, self.dp[start_t + dt + 1][v.0][v.1]);
+        //     }
+        // }
+        self.dp[end_t][to.0][to.1].1
     }
 
     /// start_tにfromから開始して、end_tにtoに居るような経路を探索する
@@ -93,44 +142,49 @@ impl PathFinder {
         }
 
         self.id += 1;
-        self.dp[start_t][from.0][from.1] = (self.id, 0);
-        for t in start_t..end_t {
-            for i in 0..N {
-                for j in 0..N {
-                    if self.dp[t][i][j].0 != self.id {
-                        continue;
-                    }
-                    for d in D {
-                        let (ni, nj) = (i + d.0, j + d.1);
-                        if ni >= N || nj >= N {
-                            continue;
-                        }
-                        let cost = move_cost(
-                            ci,
-                            t,
-                            (i, j),
-                            (ni, nj),
-                            over_container,
-                            crane_log,
-                            container_occupations,
-                        );
-                        let next = self.dp[t][i][j].1 + cost;
-                        if self.dp[t + 1][i + d.0][j + d.1].0 != self.id {
-                            self.dp[t + 1][i + d.0][j + d.1] = (self.id, next);
-                        } else if next < self.dp[t + 1][i + d.0][j + d.1].1 {
-                            self.dp[t + 1][i + d.0][j + d.1].1 = next;
-                        }
-                    }
+        self.dp[start_t][from.0][from.1] = (self.id, 0, from);
+        for (t, i, j) in iproduct!(start_t..end_t, 0..N, 0..N) {
+            if self.dp[t][i][j].0 != self.id {
+                continue;
+            }
+            for d in D {
+                let (ni, nj) = (i + d.0, j + d.1);
+                if ni >= N || nj >= N {
+                    continue;
+                }
+                let cost = move_cost(
+                    ci,
+                    t,
+                    (i, j),
+                    (ni, nj),
+                    over_container,
+                    crane_log,
+                    container_occupations,
+                );
+                let next = self.dp[t][i][j].1 + cost;
+                // if ci == 3 && t <= 5 {
+                //     eprintln!(
+                //         "[{t}] {:?} -> {:?} = {}, {}",
+                //         (i, j),
+                //         (ni, nj),
+                //         self.dp[t][i][j].1,
+                //         cost
+                //     );
+                if self.dp[t + 1][ni][nj].0 != self.id || next < self.dp[t + 1][ni][nj].1 {
+                    self.dp[t + 1][ni][nj] = (self.id, next, (i, j));
                 }
             }
         }
 
         // NOTE: 最後に拾う・落とすなどの操作をするため、時刻t+1に留まることができるか調べる必要がある？
         assert_eq!(self.dp[end_t][to.0][to.1].0, self.id);
-        (
-            self.restore_path(start_t, end_t, from, to),
-            self.dp[end_t][to.0][to.1].1 as i64,
-        )
+        let path = self.restore_path(start_t, end_t, from, to);
+        eprint!("{}, {} {}, {:?}", ci, start_t, end_t, from);
+        for (dt, v) in path.iter().enumerate() {
+            eprint!(" -> ({:?} {:?})", v, self.dp[start_t + dt + 1][v.0][v.1].1);
+        }
+        eprintln!();
+        (path, self.dp[end_t][to.0][to.1].1 as i64)
     }
 
     fn restore_path(
@@ -145,30 +199,9 @@ impl PathFinder {
         let mut cur_t = end_t;
         while cur != from || start_t != cur_t {
             cur_t -= 1;
-            let min_next = REV_D
-                .iter()
-                .filter(|(di, dj)| {
-                    cur.0 + di < N
-                        && cur.1 + dj < N
-                        && self.dp[cur_t][cur.0 + di][cur.1 + dj].0 == self.id
-                })
-                .map(|(di, dj)| self.dp[cur_t][cur.0 + di][cur.1 + dj].1)
-                .min()
-                .unwrap();
-            for &(di, dj) in REV_D.iter() {
-                let (ni, nj) = (cur.0 + di, cur.1 + dj);
-                if ni >= N || nj >= N {
-                    continue;
-                }
-                if self.dp[cur_t][ni][nj].0 != self.id {
-                    continue;
-                }
-                if self.dp[cur_t][ni][nj].1 == min_next {
-                    path.push(cur);
-                    cur = (ni, nj);
-                    break;
-                }
-            }
+            let par = self.dp[cur_t][cur.0][cur.1].2;
+            path.push(cur);
+            cur = par;
         }
         path.reverse();
         path
