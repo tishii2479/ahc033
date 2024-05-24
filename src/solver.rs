@@ -37,8 +37,8 @@ impl Solver {
         let constraints = create_constraints(&jobs, input);
         let mut assigned_jobs: Vec<Vec<Job>> = vec![vec![]; N];
         for job in jobs.iter() {
-            // assigned_jobs[rnd::gen_index(N)].push(job.clone());
-            assigned_jobs[0].push(job.clone());
+            assigned_jobs[rnd::gen_index(N)].push(job.clone());
+            // assigned_jobs[0].push(job.clone());
         }
         let schedules = jobs_to_schedules(assigned_jobs);
 
