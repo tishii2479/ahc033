@@ -14,9 +14,10 @@ struct Score {
 }
 
 impl Score {
+    #[inline]
     fn to_score(&self) -> i64 {
         self.raw_score
-            + self.constraint_penalty * 1_000_000
+            + self.constraint_penalty * 1_000_000_000
             + self.container_occupation_penalty * 1_000_000
             + self.schedule_feasibility_penalty * 1_000
     }
@@ -57,36 +58,37 @@ impl Solver {
 
         for _t in 0..iteration {
             if _t % 1000 == 0 {
-                eprintln!("{}", _t);
+                eprintln!("[{:7}] {:?}", _t, self.score);
             }
             let p = rnd::nextf();
-            let start_temp = if self.score.to_score() > 1_000_000 {
+            let start_temp = if self.score.to_score() > 1_000_000_000 {
+                10_000_000
+            } else if self.score.to_score() > 1_000_000 {
                 10_000
-            } else if self.score.to_score() > 1000 {
-                100
+            } else if self.score.to_score() > 1_000 {
+                10
             } else {
                 1
             } as f64;
             let progress = _t as f64 / iteration as f64;
             let cur_temp = start_temp.powf(1. - progress);
-            let threshold = -(cur_temp * progress) * rnd::nextf().ln();
+            let threshold = -cur_temp * rnd::nextf().ln();
             let threshold = threshold.round() as i64;
-            // dbg!(self.score, threshold);
             let threshold = if self.score.to_score() > 1_000_000 {
                 1_000
             } else {
                 1
             };
-            if p < 0.7 {
+            if p < 0.2 {
                 // 一つのスケジュールの時間を伸ばす・減らす
                 self.action_shift_one_time(threshold, input);
-            } else if p < 0.8 {
+            } else if p < 0.6 {
                 // 一つのコンテナの置く位置を変更する
                 self.action_change_container_p(threshold, input);
-            } else if p < 0.9 {
+            } else if p < 0.8 {
                 // 一つのジョブを移動する
                 self.action_move_one_job(threshold, input);
-            } else if p < 0.95 {
+            } else if p < 0.9 {
                 // クレーン間でジョブをスワップする
                 self.action_swap_job_between_cranes(threshold, input);
             } else {
@@ -98,8 +100,10 @@ impl Solver {
         }
 
         eprintln!("[end]    upper-level-score: {:?}", self.score);
-        // assert!(self.eval_schedules() < 1_000input);
         self.eval_schedules(input);
+        for ci in 0..N {
+            eprintln!("{ci}: {:?}", self.schedules[ci]);
+        }
 
         let container_occupations = create_container_occupations(&self.schedules, input);
         let (mut crane_log, _) = optimize_lower_level(&self.schedules, &container_occupations);
@@ -137,7 +141,7 @@ impl Solver {
 
         let new_score = self.eval_schedules(input);
         if new_score.to_score() - self.score.to_score() < threshold {
-            eprintln!("{:?} -> {:?}", self.score, new_score);
+            // eprintln!("{:?} -> {:?}", self.score, new_score);
             self.score = new_score;
         } else {
             (self.schedules[ci][si].job, self.schedules[ci][sj].job) =
@@ -159,7 +163,7 @@ impl Solver {
 
         let new_score = self.eval_schedules(input);
         if new_score.to_score() - self.score.to_score() < threshold {
-            eprintln!("{:?} -> {:?}", self.score, new_score);
+            // eprintln!("{:?} -> {:?}", self.score, new_score);
             self.score = new_score;
         } else {
             (self.schedules[ci][si].job, self.schedules[cj][sj].job) =
@@ -181,7 +185,7 @@ impl Solver {
 
         let new_score = self.eval_schedules(input);
         if new_score.to_score() - self.score.to_score() < threshold {
-            eprintln!("{:?} -> {:?}", self.score, new_score);
+            // eprintln!("{:?} -> {:?}", self.score, new_score);
             self.score = new_score;
         } else {
             let s = self.schedules[cj].remove(sj);
@@ -195,7 +199,11 @@ impl Solver {
             return;
         }
         let d = if rnd::nextf() < 0.5 { 1 } else { !0 };
-        let t = rnd::gen_index(self.schedules[ci].last().unwrap().end_t);
+        let t = if rnd::nextf() < 0.2 {
+            rnd::gen_index(self.schedules[ci].last().unwrap().end_t)
+        } else {
+            self.schedules[ci][rnd::gen_index(self.schedules[ci].len())].start_t + 1
+        };
         let t = if d == 1 { t } else { t.max(1) }; // オーバーフロー対策
         let a = self.schedules[ci].clone();
         for s in self.schedules[ci].iter_mut() {
@@ -209,7 +217,7 @@ impl Solver {
         let new_score = self.eval_schedules(input);
 
         if new_score.to_score() - self.score.to_score() < threshold {
-            eprintln!("{:?} -> {:?}", self.score, new_score);
+            // eprintln!("{:?} -> {:?}", self.score, new_score);
             self.score = new_score;
         } else {
             self.schedules[ci] = a;
@@ -294,7 +302,6 @@ impl Solver {
             container_occupation_penalty,
             schedule_feasibility_penalty,
         };
-        eprintln!("{:?}", score);
         score
     }
 
