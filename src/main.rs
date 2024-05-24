@@ -22,12 +22,8 @@ fn main() {
 
     let input = Input::new(a);
     let jobs = listup_jobs(&input);
-    // for job in jobs.iter() {
-    //     eprintln!("{:?}", job);
-    // }
-    // eprintln!("{}", jobs.len());
     let mut solver = Solver::new(jobs, &input);
-    let iteration = 100_000;
+    let iteration = 500_000;
     let moves = solver.solve(iteration, &input);
     output_ans(&moves);
 }

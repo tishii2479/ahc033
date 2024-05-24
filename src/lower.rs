@@ -7,7 +7,6 @@ pub fn find_path_for_crane(
     crane_log: &mut Vec<Vec<(usize, usize)>>,
     container_occupations: &Vec<Vec<Vec<(usize, usize, usize)>>>,
     path_finder: &mut PathFinder,
-    debug: bool,
 ) -> i64 {
     let mut cost = 0;
     for s in crane_schedules[ci].iter() {
@@ -25,9 +24,6 @@ pub fn find_path_for_crane(
             &crane_log,
             &container_occupations,
         );
-        // if debug && cost1 > 0 {
-        //     dbg!(ci, s, &path1, cost1);
-        // }
         crane_log[ci].extend(path1);
         crane_log[ci].push(s.job.from); // P
         cost += cost1;
@@ -43,9 +39,6 @@ pub fn find_path_for_crane(
             &crane_log,
             &container_occupations,
         );
-        // if debug && cost2 > 0 {
-        //     dbg!(ci, s, &path2, cost2);
-        // }
         crane_log[ci].extend(path2);
         crane_log[ci].push(s.job.to); // Q
         cost += cost2;
@@ -59,9 +52,9 @@ pub fn find_path_for_crane(
 pub fn optimize_lower_level(
     crane_schedules: &Vec<Vec<Schedule>>,
     container_occupations: &Vec<Vec<Vec<(usize, usize, usize)>>>,
+    path_finder: &mut PathFinder,
 ) -> (Vec<Vec<(usize, usize)>>, i64) {
     let mut crane_log: Vec<Vec<(usize, usize)>> = (0..N).map(|ci| vec![(ci, 0)]).collect();
-    let mut path_finder = PathFinder::new();
     let mut score = 0;
 
     for _t in 0..3 {
@@ -74,8 +67,7 @@ pub fn optimize_lower_level(
                 crane_schedules,
                 &mut crane_log,
                 container_occupations,
-                &mut path_finder,
-                false,
+                path_finder,
             );
         }
         // eprintln!("score = {:?}", score);

@@ -56,8 +56,11 @@ impl Solver {
     pub fn solve(&mut self, iteration: usize, input: &Input) -> Vec<Vec<Move>> {
         eprintln!("[start]  upper-level-score: {:?}", self.score);
 
+        let mut cnt = vec![0; 7];
         for _t in 0..iteration {
             if _t % 1000 == 0 {
+                eprintln!("{:?}", cnt);
+                cnt = vec![0; 7];
                 eprintln!("[{:7}] {:?}", _t, self.score);
             }
             let p = rnd::nextf();
@@ -74,29 +77,51 @@ impl Solver {
             let cur_temp = start_temp.powf(1. - progress);
             let threshold = -cur_temp * rnd::nextf().ln();
             let threshold = threshold.round() as i64;
-            let threshold = if self.score.to_score() > 1_000_000 {
-                1_000
+            let threshold = if self.score.to_score() > 1_000_000_000 {
+                10_000_000
+            } else if self.score.to_score() > 1_000_000 {
+                10_000
+            } else if self.score.to_score() > 1_000 {
+                10
             } else {
                 1
             };
-            if p < 0.2 {
+            // 一時点のスケジュールを全てのクレーンで伸ばす
+            if p < 0. {
+                if self.action_shift_all_time(threshold, input) {
+                    cnt[0] += 1;
+                }
+            } else if p < 0.2 {
                 // 一つのスケジュールの時間を伸ばす・減らす
-                self.action_shift_one_time(threshold, input);
+                if self.action_shift_one_time(threshold, input) {
+                    cnt[1] += 1;
+                }
             } else if p < 0.6 {
                 // 一つのコンテナの置く位置を変更する
-                self.action_change_container_p(threshold, input);
+                if self.action_change_container_p(threshold, input) {
+                    cnt[2] += 1;
+                }
             } else if p < 0.8 {
-                // 一つのジョブを移動する
-                self.action_move_one_job(threshold, input);
+                // コンテナを置く位置を入れ替える
+                if self.action_swap_container_p(threshold, input) {
+                    cnt[3] += 1;
+                }
             } else if p < 0.9 {
+                // 一つのジョブを移動する
+                if self.action_move_one_job(threshold, input) {
+                    cnt[4] += 1;
+                }
+            } else if p < 0.95 {
                 // クレーン間でジョブをスワップする
-                self.action_swap_job_between_cranes(threshold, input);
+                if self.action_swap_job_between_cranes(threshold, input) {
+                    cnt[5] += 1;
+                }
             } else {
                 // クレーン内でジョブをスワップする
-                self.action_swap_job_in_crane(threshold, input);
+                if self.action_swap_job_in_crane(threshold, input) {
+                    cnt[6] += 1;
+                }
             }
-            // 一時点のスケジュールを全てのクレーンで伸ばす
-            // コンテナを置く位置を入れ替える
         }
 
         eprintln!("[end]    upper-level-score: {:?}", self.score);
@@ -106,7 +131,11 @@ impl Solver {
         }
 
         let container_occupations = create_container_occupations(&self.schedules, input);
-        let (mut crane_log, _) = optimize_lower_level(&self.schedules, &container_occupations);
+        let (mut crane_log, _) = optimize_lower_level(
+            &self.schedules,
+            &container_occupations,
+            &mut self.path_finder,
+        );
         for ci in (0..N).rev() {
             crane_log[ci].clear();
             crane_log[ci].push((ci, 0));
@@ -116,16 +145,57 @@ impl Solver {
                 &mut crane_log,
                 &container_occupations,
                 &mut self.path_finder,
-                true,
             );
         }
         to_moves(&crane_log, &self.schedules)
     }
 
-    fn action_swap_job_in_crane(&mut self, threshold: i64, input: &Input) {
+    fn action_swap_container_p(&mut self, threshold: i64, input: &Input) -> bool {
+        let (c1, c2) = (rnd::gen_index(N * N), rnd::gen_index(N * N));
+        let mut prev_p = None;
+        let new_p = (rnd::gen_index(N), rnd::gen_range(1, N - 1));
+        for i in 0..N {
+            for s in self.schedules[i].iter_mut() {
+                if s.job.c != c {
+                    continue;
+                }
+                if !s.job.is_out_job() {
+                    prev_p = Some(s.job.to);
+                    s.job.to = new_p;
+                }
+                if !s.job.is_in_job() {
+                    prev_p = Some(s.job.from);
+                    s.job.from = new_p;
+                }
+            }
+        }
+
+        let new_score = self.eval_schedules(input);
+        let adopt = new_score.to_score() - self.score.to_score() < threshold;
+        if adopt {
+            self.score = new_score;
+        } else {
+            for i in 0..N {
+                for s in self.schedules[i].iter_mut() {
+                    if s.job.c != c {
+                        continue;
+                    }
+                    if !s.job.is_out_job() {
+                        s.job.to = prev_p;
+                    }
+                    if !s.job.is_in_job() {
+                        s.job.from = prev_p;
+                    }
+                }
+            }
+        }
+        adopt
+    }
+
+    fn action_swap_job_in_crane(&mut self, threshold: i64, input: &Input) -> bool {
         let ci = rnd::gen_index(N);
         if self.schedules[ci].len() < 2 {
-            return;
+            return false;
         }
         let si = rnd::gen_index(self.schedules[ci].len() - 1);
         let sj = si + 1;
@@ -134,25 +204,27 @@ impl Solver {
         //     rnd::gen_index(self.schedules[ci].len()),
         // );
         if si == sj {
-            return;
+            return false;
         }
         (self.schedules[ci][si].job, self.schedules[ci][sj].job) =
             (self.schedules[ci][sj].job, self.schedules[ci][si].job);
 
         let new_score = self.eval_schedules(input);
-        if new_score.to_score() - self.score.to_score() < threshold {
+        let adopt = new_score.to_score() - self.score.to_score() < threshold;
+        if adopt {
             // eprintln!("{:?} -> {:?}", self.score, new_score);
             self.score = new_score;
         } else {
             (self.schedules[ci][si].job, self.schedules[ci][sj].job) =
                 (self.schedules[ci][sj].job, self.schedules[ci][si].job);
         }
+        adopt
     }
 
-    fn action_swap_job_between_cranes(&mut self, threshold: i64, input: &Input) {
+    fn action_swap_job_between_cranes(&mut self, threshold: i64, input: &Input) -> bool {
         let (ci, cj) = (rnd::gen_index(N), rnd::gen_index(N));
         if ci == cj || self.schedules[ci].len() == 0 || self.schedules[cj].len() == 0 {
-            return;
+            return false;
         }
         let (si, sj) = (
             rnd::gen_index(self.schedules[ci].len()),
@@ -162,19 +234,21 @@ impl Solver {
             (self.schedules[cj][sj].job, self.schedules[ci][si].job);
 
         let new_score = self.eval_schedules(input);
-        if new_score.to_score() - self.score.to_score() < threshold {
+        let adopt = new_score.to_score() - self.score.to_score() < threshold;
+        if adopt {
             // eprintln!("{:?} -> {:?}", self.score, new_score);
             self.score = new_score;
         } else {
             (self.schedules[ci][si].job, self.schedules[cj][sj].job) =
                 (self.schedules[cj][sj].job, self.schedules[ci][si].job);
         }
+        adopt
     }
 
-    fn action_move_one_job(&mut self, threshold: i64, input: &Input) {
+    fn action_move_one_job(&mut self, threshold: i64, input: &Input) -> bool {
         let (ci, cj) = (rnd::gen_index(N), rnd::gen_index(N));
         if ci == cj || self.schedules[ci].len() == 0 {
-            return;
+            return false;
         }
         let (si, sj) = (
             rnd::gen_index(self.schedules[ci].len()),
@@ -184,19 +258,52 @@ impl Solver {
         self.schedules[cj].insert(sj, s);
 
         let new_score = self.eval_schedules(input);
-        if new_score.to_score() - self.score.to_score() < threshold {
+        let adopt = new_score.to_score() - self.score.to_score() < threshold;
+        if adopt {
             // eprintln!("{:?} -> {:?}", self.score, new_score);
             self.score = new_score;
         } else {
             let s = self.schedules[cj].remove(sj);
             self.schedules[ci].insert(si, s);
         }
+        adopt
     }
 
-    fn action_shift_one_time(&mut self, threshold: i64, input: &Input) {
+    fn action_shift_all_time(&mut self, threshold: i64, input: &Input) -> bool {
+        let d = if rnd::nextf() < 0.5 { 1 } else { !0 };
+        let ci = rnd::gen_index(N);
+        let t = if rnd::nextf() < 0.2 {
+            rnd::gen_index(self.schedules[ci].last().unwrap().end_t)
+        } else {
+            self.schedules[ci][rnd::gen_index(self.schedules[ci].len())].start_t + 1
+        };
+        let t = if d == 1 { t } else { t.max(1) }; // オーバーフロー対策
+        let a = self.schedules.clone();
+        for i in 0..N {
+            for s in self.schedules[i].iter_mut() {
+                if s.start_t >= t {
+                    s.start_t += d;
+                }
+                if s.end_t >= t && s.start_t < s.end_t + d {
+                    s.end_t += d;
+                }
+            }
+        }
+        let new_score = self.eval_schedules(input);
+        let adopt = new_score.to_score() - self.score.to_score() < threshold;
+        if adopt {
+            // eprintln!("{:?} -> {:?}", self.score, new_score);
+            self.score = new_score;
+        } else {
+            self.schedules = a;
+        }
+        adopt
+    }
+
+    fn action_shift_one_time(&mut self, threshold: i64, input: &Input) -> bool {
         let ci = rnd::gen_index(N);
         if self.schedules[ci].len() == 0 {
-            return;
+            return false;
         }
         let d = if rnd::nextf() < 0.5 { 1 } else { !0 };
         let t = if rnd::nextf() < 0.2 {
@@ -215,16 +322,18 @@ impl Solver {
             }
         }
         let new_score = self.eval_schedules(input);
+        let adopt = new_score.to_score() - self.score.to_score() < threshold;
 
-        if new_score.to_score() - self.score.to_score() < threshold {
+        if adopt {
             // eprintln!("{:?} -> {:?}", self.score, new_score);
             self.score = new_score;
         } else {
             self.schedules[ci] = a;
         }
+        adopt
     }
 
-    fn action_change_container_p(&mut self, threshold: i64, input: &Input) {
+    fn action_change_container_p(&mut self, threshold: i64, input: &Input) -> bool {
         let c = rnd::gen_index(N * N);
         let mut prev_p = None;
         let new_p = (rnd::gen_index(N), rnd::gen_range(1, N - 1));
@@ -243,10 +352,11 @@ impl Solver {
                 }
             }
         }
-        let Some(prev_p) = prev_p else { return };
+        let Some(prev_p) = prev_p else { return false };
 
         let new_score = self.eval_schedules(input);
-        if new_score.to_score() - self.score.to_score() < threshold {
+        let adopt = new_score.to_score() - self.score.to_score() < threshold;
+        if adopt {
             // eprintln!("[{_t}] {} ->s {}", self.score, new_score);
             self.score = new_score;
         } else {
@@ -264,6 +374,7 @@ impl Solver {
                 }
             }
         }
+        adopt
     }
 
     fn eval_schedules(&mut self, input: &Input) -> Score {
@@ -309,7 +420,11 @@ impl Solver {
         &mut self,
         container_occupations: &Vec<Vec<Vec<(usize, usize, usize)>>>,
     ) -> i64 {
-        let (_, penalty) = optimize_lower_level(&self.schedules, &container_occupations);
+        let (_, penalty) = optimize_lower_level(
+            &self.schedules,
+            &container_occupations,
+            &mut self.path_finder,
+        );
         penalty as i64
     }
 
