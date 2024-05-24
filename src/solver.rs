@@ -2,20 +2,10 @@ use itertools::iproduct;
 
 use crate::def::*;
 use crate::helper::*;
+use crate::lower::optimize_lower_level;
 use crate::util::*;
 
-pub fn optimize_upper_level(
-    jobs: Vec<Job>,
-    input: &Input,
-) -> (Vec<Vec<Schedule>>, Vec<Vec<Vec<Option<usize>>>>) {
-    let mut solver = Solver::new(jobs, input);
-    let iteration = 100_000;
-    solver.solve(iteration);
-    let container_occupations = create_container_occupations_tensor(&solver.schedules, input);
-    (solver.schedules, container_occupations)
-}
-
-struct Solver {
+pub struct Solver {
     jobs: Vec<Job>,
     schedules: Vec<Vec<Schedule>>,
     constraints: Vec<Constraint>,
@@ -24,7 +14,7 @@ struct Solver {
 }
 
 impl Solver {
-    fn new(jobs: Vec<Job>, input: &Input) -> Solver {
+    pub fn new(jobs: Vec<Job>, input: &Input) -> Solver {
         let path_finder = PathFinder::new();
         let constraints = create_constraints(&jobs, input);
         let mut assigned_jobs: Vec<Vec<Job>> = vec![vec![]; N];
@@ -45,7 +35,7 @@ impl Solver {
         solver
     }
 
-    fn solve(&mut self, iteration: usize) {
+    pub fn solve(&mut self, iteration: usize) -> Vec<Vec<Move>> {
         eprintln!("[start]  upper-level-score: {}", self.score);
 
         for _t in 0..iteration {
@@ -82,31 +72,12 @@ impl Solver {
             // 2. 一時点のスケジュールを全てのクレーンで伸ばす
         }
 
-        let container_occupations = create_container_occupations(&self.schedules);
-        for (i, j) in iproduct!(0..N, 0..N) {
-            eprintln!("{} {}, {:?}", i, j, container_occupations[i][j]);
-        }
-        eprintln!("{}", self.jobs.len());
-        for ci in 1..N {
-            for s in self.schedules[ci].iter() {
-                // s.start_t + 1 -> s.end_tにs.job.from -> s.job.toへの経路が存在するかどうか
-                // 存在しない場合、衝突したコンテナの個数をペナルティとして加える
-                let a = self.path_finder.find_path_easy(
-                    s.start_t + 1,
-                    s.end_t,
-                    s.job.from,
-                    s.job.to,
-                    &container_occupations,
-                    true,
-                );
-                if a > 0 {
-                    dbg!(ci, a, s);
-                }
-            }
-        }
-
         eprintln!("[end]    upper-level-score: {}", self.score);
         assert!(self.eval_schedules() < 1_000);
+
+        let container_occupations = create_container_occupations(&self.schedules);
+        let (crane_log, _) = optimize_lower_level(&self.schedules, &container_occupations);
+        to_moves(&crane_log, &self.schedules)
     }
 
     fn action_swap_job_in_crane(&mut self, threshold: i64) {

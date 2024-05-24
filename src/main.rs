@@ -9,7 +9,6 @@ use proconio::input;
 
 use crate::def::*;
 use crate::helper::*;
-use crate::lower::*;
 use crate::pretask::*;
 use crate::solver::*;
 use crate::util::*;
@@ -27,15 +26,8 @@ fn main() {
     //     eprintln!("{:?}", job);
     // }
     // eprintln!("{}", jobs.len());
-    eprintln!("{}", time::elapsed_seconds());
-    let (crane_schedules, container_occupations) = optimize_upper_level(jobs, &input);
-    eprintln!("{}", time::elapsed_seconds());
-    for ci in 0..N {
-        eprintln!("ci={ci}:");
-        for s in crane_schedules[ci].iter() {
-            eprintln!("{:?}", s);
-        }
-    }
-    let moves = optimize_lower_level(crane_schedules, container_occupations);
+    let mut solver = Solver::new(jobs, &input);
+    let iteration = 100_000;
+    let moves = solver.solve(iteration);
     output_ans(&moves);
 }

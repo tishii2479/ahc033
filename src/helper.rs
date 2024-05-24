@@ -7,6 +7,34 @@ pub fn dist(a: (usize, usize), b: (usize, usize)) -> usize {
     a.0.abs_diff(b.0) + a.1.abs_diff(b.1)
 }
 
+pub fn to_moves(
+    crane_log: &Vec<Vec<(usize, usize)>>,
+    schedules: &Vec<Vec<Schedule>>,
+) -> Vec<Vec<Move>> {
+    let mut moves = vec![vec![]; N];
+    for i in 0..N {
+        for t in 0..crane_log[i].len() - 1 {
+            let d = (
+                crane_log[i][t + 1].0 - crane_log[i][t].0,
+                crane_log[i][t + 1].1 - crane_log[i][t].1,
+            );
+            moves[i].push(Move::from_d(d));
+        }
+        for s in schedules[i].iter() {
+            moves[i][s.start_t] = Move::Pick;
+            moves[i][s.end_t] = Move::Drop;
+        }
+    }
+
+    let t = (0..N).map(|i| moves[i].len()).max().unwrap();
+    for i in 0..N {
+        if moves[i].len() < t {
+            moves[i].push(Move::Blow);
+        }
+    }
+    moves
+}
+
 pub fn output_ans(moves: &Vec<Vec<Move>>) {
     let mut score = 0;
     for i in 0..N {
@@ -108,7 +136,7 @@ impl PathFinder {
         to: (usize, usize),
         over_container: bool,
         crane_log: &Vec<Vec<(usize, usize)>>,
-        container_occupations: &Vec<Vec<Vec<Option<usize>>>>,
+        container_occupations: &Vec<Vec<Vec<(usize, usize, usize)>>>,
     ) -> (Vec<(usize, usize)>, i64) {
         fn move_cost(
             ci: usize,
@@ -117,12 +145,16 @@ impl PathFinder {
             nv: (usize, usize),
             over_container: bool,
             crane_log: &Vec<Vec<(usize, usize)>>,
-            container_occupations: &Vec<Vec<Vec<Option<usize>>>>,
+            container_occupations: &Vec<Vec<Vec<(usize, usize, usize)>>>,
         ) -> usize {
             let (ni, nj) = nv;
             let mut collide = 0;
-            if container_occupations[t + 1][ni][nj].is_some() && !over_container {
-                collide += 1;
+            if !over_container {
+                for &(l, r, _) in container_occupations[ni][nj].iter() {
+                    if l < t && t <= r {
+                        collide += 1;
+                    }
+                }
             }
             for cj in 0..N {
                 if ci == cj {
@@ -180,11 +212,11 @@ impl PathFinder {
         // NOTE: 最後に拾う・落とすなどの操作をするため、時刻t+1に留まることができるか調べる必要がある？
         assert_eq!(self.dp[end_t][to.0][to.1].0, self.id);
         let path = self.restore_path(start_t, end_t, from, to);
-        eprint!("{}, {} {}, {:?}", ci, start_t, end_t, from);
-        for (dt, v) in path.iter().enumerate() {
-            eprint!(" -> ({:?} {:?})", v, self.dp[start_t + dt + 1][v.0][v.1].1);
-        }
-        eprintln!();
+        // eprint!("{}, {} {}, {:?}", ci, start_t, end_t, from);
+        // for (dt, v) in path.iter().enumerate() {
+        //     eprint!(" -> ({:?} {:?})", v, self.dp[start_t + dt + 1][v.0][v.1].1);
+        // }
+        // eprintln!();
         (path, self.dp[end_t][to.0][to.1].1 as i64)
     }
 
