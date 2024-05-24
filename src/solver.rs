@@ -5,6 +5,7 @@ use crate::helper::*;
 use crate::lower::*;
 use crate::util::*;
 
+#[allow(unused)]
 #[derive(Clone, Copy, Debug, Default)]
 struct Score {
     raw_score: i64,
@@ -17,11 +18,10 @@ struct Score {
 impl Score {
     #[inline]
     fn to_score(&self) -> i64 {
-        self.raw_score * 1_000
-            + self.constraint_penalty * 1_000_000_000_000
-            + self.container_occupation_penalty * 1_000_000_000
-            + self.schedule_feasibility_penalty * 1_000_000
-        // + self.length_sum
+        self.raw_score
+            + self.constraint_penalty * 1_000_000_000
+            + self.container_occupation_penalty * 1_000_000
+            + self.schedule_feasibility_penalty * 1_000 // + self.length_sum
     }
 }
 
@@ -63,7 +63,7 @@ impl Solver {
                 eprintln!("{:?}", cnt);
                 cnt = vec![0; 7];
                 eprintln!(
-                    "[{:7}, {:.8}] {:?} {}",
+                    "[{:7}, {:.3}] {:?} {}",
                     _t,
                     time::elapsed_seconds(),
                     self.score,
@@ -96,12 +96,12 @@ impl Solver {
                 }
             }
             let p = rnd::nextf();
-            let threshold = if self.score.to_score() > 1_000_000_000_000 {
-                10_000_000_000
-            } else if self.score.to_score() > 1_000_000_000 {
+            let threshold = if self.score.to_score() > 1_000_000_000 {
                 10_000_000
             } else if self.score.to_score() > 1_000_000 {
                 10_000
+            } else if self.score.to_score() > 1_000 {
+                10
             } else {
                 1
             };
@@ -131,7 +131,7 @@ impl Solver {
                 if self.action_move_one_job(threshold, input) {
                     cnt[4] += 1;
                 }
-            } else if p < 0.9 {
+            } else if p < 1. {
                 // クレーン間でジョブをスワップする
                 if self.action_swap_job_between_cranes(threshold, input) {
                     cnt[5] += 1;
@@ -276,10 +276,17 @@ impl Solver {
         if ci == cj || self.schedules[ci].len() == 0 || self.schedules[cj].len() == 0 {
             return false;
         }
-        let (si, sj) = (
-            rnd::gen_index(self.schedules[ci].len()),
-            rnd::gen_index(self.schedules[cj].len()),
-        );
+        let si = rnd::gen_index(self.schedules[ci].len());
+        let sj = {
+            let mut ret = self.schedules[cj].len() - 1;
+            for (j, s) in self.schedules[cj].iter().enumerate() {
+                if s.job_idx > self.schedules[ci][si].job_idx {
+                    ret = j - if j > 0 { rnd::gen_index(2) } else { 0 };
+                    break;
+                }
+            }
+            ret
+        };
         let cloned_s = self.schedules.clone();
         (
             self.schedules[ci][si].job_idx,
@@ -306,21 +313,19 @@ impl Solver {
         if ci == cj || self.schedules[ci].len() == 0 {
             return false;
         }
-        let (si, sj) = (
-            rnd::gen_index(self.schedules[ci].len()),
-            rnd::gen_index(self.schedules[cj].len() + 1),
-        );
+        let si = rnd::gen_index(self.schedules[ci].len());
+        let sj = {
+            let mut ret = self.schedules[cj].len();
+            for (j, s) in self.schedules[cj].iter().enumerate() {
+                if s.job_idx > self.schedules[ci][si].job_idx {
+                    ret = j;
+                    break;
+                }
+            }
+            ret
+        };
         let cloned_s = self.schedules.clone();
         let s = self.schedules[ci].remove(si);
-        // s.end_t = s.start_t + dist(self.jobs[s.job_idx].from, self.jobs[s.job_idx].to) + 1;
-        // if sj < self.schedules[cj].len() {
-        //     self.schedules[cj][sj].start_t = s.end_t
-        //         + dist(
-        //             self.jobs[s.job_idx].to,
-        //             self.jobs[self.schedules[cj][sj].job_idx].to,
-        //         )
-        //         + 1;
-        // }
         self.schedules[cj].insert(sj, s);
 
         let new_score = self.eval_schedules(input);
@@ -455,6 +460,7 @@ impl Solver {
             .max()
             .unwrap() as i64;
         let length_sum = (0..N)
+            .filter(|&ci| self.schedules[ci].len() > 0)
             .map(|ci| self.schedules[ci].last().unwrap().end_t + 1)
             .sum::<usize>() as i64;
 
@@ -593,10 +599,7 @@ impl Solver {
                     let interval = dist(self.jobs[job_i].from, self.jobs[job_i].to) + 1;
                     assert_eq!(self.jobs[s.job_idx].idx, job_i);
                     if s.start_t + interval > s.end_t {
-                        penalty += s.start_t + interval - s.end_t;
-                    }
-                    if s.start_t + interval + 5 < s.end_t {
-                        penalty += s.end_t - (s.start_t + interval + 5);
+                        penalty += (s.start_t + interval - s.end_t) * 100;
                     }
                 }
             }

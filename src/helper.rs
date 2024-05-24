@@ -67,66 +67,6 @@ impl PathFinder {
     }
 
     /// start_tにfromから開始して、end_tにtoに居るような経路を探索する
-    /// 衝突するコンテナの個数の最小数を返す
-    /// 到達できない場合はassertに引っかかる
-    pub fn find_path_easy(
-        &mut self,
-        start_t: usize,
-        end_t: usize,
-        from: (usize, usize),
-        to: (usize, usize),
-        container_occupations: &Vec<Vec<Vec<(usize, usize, usize)>>>,
-        debug: bool,
-    ) -> usize {
-        fn move_cost(
-            t: usize,
-            nv: (usize, usize),
-            container_occupations: &Vec<Vec<Vec<(usize, usize, usize)>>>,
-        ) -> usize {
-            let (ni, nj) = nv;
-            for &(l, r, _) in container_occupations[ni][nj].iter() {
-                if l < t && t <= r {
-                    return 1;
-                }
-            }
-            0
-        }
-
-        self.id += 1;
-        self.dp[start_t][from.0][from.1] = (self.id, 0, from);
-        for t in start_t..end_t {
-            for i in 0..N {
-                for j in 0..N {
-                    if self.dp[t][i][j].0 != self.id {
-                        continue;
-                    }
-                    for d in D {
-                        let (ni, nj) = (i + d.0, j + d.1);
-                        if ni >= N || nj >= N {
-                            continue;
-                        }
-                        let cost = move_cost(t + 1, (ni, nj), container_occupations);
-                        let next = self.dp[t][i][j].1 + cost;
-                        if self.dp[t + 1][i + d.0][j + d.1].0 != self.id
-                            || next < self.dp[t + 1][i + d.0][j + d.1].1
-                        {
-                            self.dp[t + 1][i + d.0][j + d.1] = (self.id, next, (i, j));
-                        }
-                    }
-                }
-            }
-        }
-        assert_eq!(self.dp[end_t][to.0][to.1].0, self.id);
-        // if debug {
-        //     let path = self.restore_path(start_t, end_t, from, to);
-        //     for (dt, v) in path.iter().enumerate() {
-        //         eprintln!("{:?} {:?}", v, self.dp[start_t + dt + 1][v.0][v.1]);
-        //     }
-        // }
-        self.dp[end_t][to.0][to.1].1
-    }
-
-    /// start_tにfromから開始して、end_tにtoに居るような経路を探索する
     pub fn find_path(
         &mut self,
         ci: usize,
@@ -149,10 +89,23 @@ impl PathFinder {
         ) -> usize {
             let (ni, nj) = nv;
             let mut collide = 0;
-            if !over_container {
+            if !over_container && !(nj == 0 && v == nv) {
                 for &(l, r, _) in container_occupations[ni][nj].iter() {
                     if l < t && t <= r {
                         collide += 1;
+                    }
+                }
+            }
+            if nj == 0 && collide > 0 {
+                for cj in 0..N {
+                    if ci == cj {
+                        continue;
+                    }
+                    if t + 1 >= crane_log[cj].len() {
+                        continue;
+                    }
+                    if crane_log[cj][t] == nv && crane_log[cj][t + 1] == (ni, 1) {
+                        collide -= 1;
                     }
                 }
             }
