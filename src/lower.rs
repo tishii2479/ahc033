@@ -25,9 +25,9 @@ pub fn find_path_for_crane(
             &crane_log,
             &container_occupations,
         );
-        if debug && cost1 > 0 {
-            dbg!(ci, s, &path1);
-        }
+        // if debug && cost1 > 0 {
+        //     dbg!(ci, s, &path1, cost1);
+        // }
         crane_log[ci].extend(path1);
         crane_log[ci].push(s.job.from); // P
         cost += cost1;
@@ -43,9 +43,9 @@ pub fn find_path_for_crane(
             &crane_log,
             &container_occupations,
         );
-        if debug && cost2 > 0 {
-            dbg!(ci, s, &path2);
-        }
+        // if debug && cost2 > 0 {
+        //     dbg!(ci, s, &path2, cost2);
+        // }
         crane_log[ci].extend(path2);
         crane_log[ci].push(s.job.to); // Q
         cost += cost2;

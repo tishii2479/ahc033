@@ -27,7 +27,7 @@ fn main() {
     // }
     // eprintln!("{}", jobs.len());
     let mut solver = Solver::new(jobs, &input);
-    let iteration = 50_000;
+    let iteration = 100_000;
     let moves = solver.solve(iteration, &input);
     output_ans(&moves);
 }

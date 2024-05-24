@@ -5,12 +5,29 @@ use crate::helper::*;
 use crate::lower::*;
 use crate::util::*;
 
+#[derive(Clone, Copy, Debug, Default)]
+struct Score {
+    raw_score: i64,
+    constraint_penalty: i64,
+    container_occupation_penalty: i64,
+    schedule_feasibility_penalty: i64,
+}
+
+impl Score {
+    fn to_score(&self) -> i64 {
+        self.raw_score
+            + self.constraint_penalty * 1_000_000
+            + self.container_occupation_penalty * 1_000_000
+            + self.schedule_feasibility_penalty * 1_000
+    }
+}
+
 pub struct Solver {
     jobs: Vec<Job>,
     schedules: Vec<Vec<Schedule>>,
     constraints: Vec<Constraint>,
     path_finder: PathFinder,
-    score: i64,
+    score: Score,
 }
 
 impl Solver {
@@ -19,8 +36,8 @@ impl Solver {
         let constraints = create_constraints(&jobs, input);
         let mut assigned_jobs: Vec<Vec<Job>> = vec![vec![]; N];
         for job in jobs.iter() {
-            assigned_jobs[rnd::gen_index(N)].push(job.clone());
-            // assigned_jobs[0].push(job.clone());
+            // assigned_jobs[rnd::gen_index(N)].push(job.clone());
+            assigned_jobs[0].push(job.clone());
         }
         let schedules = jobs_to_schedules(assigned_jobs);
 
@@ -29,21 +46,23 @@ impl Solver {
             schedules,
             constraints,
             path_finder,
-            score: 0,
+            score: Score::default(),
         };
         solver.score = solver.eval_schedules(input);
         solver
     }
 
     pub fn solve(&mut self, iteration: usize, input: &Input) -> Vec<Vec<Move>> {
-        eprintln!("[start]  upper-level-score: {}", self.score);
+        eprintln!("[start]  upper-level-score: {:?}", self.score);
 
         for _t in 0..iteration {
-            eprintln!("{}", _t);
+            if _t % 1000 == 0 {
+                eprintln!("{}", _t);
+            }
             let p = rnd::nextf();
-            let start_temp = if self.score > 1_000_000 {
+            let start_temp = if self.score.to_score() > 1_000_000 {
                 10_000
-            } else if self.score > 1000 {
+            } else if self.score.to_score() > 1000 {
                 100
             } else {
                 1
@@ -53,17 +72,21 @@ impl Solver {
             let threshold = -(cur_temp * progress) * rnd::nextf().ln();
             let threshold = threshold.round() as i64;
             // dbg!(self.score, threshold);
-            let threshold = if self.score > 1_000_000 { 1_000 } else { 1 };
-            if p < 0.2 {
+            let threshold = if self.score.to_score() > 1_000_000 {
+                1_000
+            } else {
+                1
+            };
+            if p < 0.7 {
                 // 一つのスケジュールの時間を伸ばす・減らす
                 self.action_shift_one_time(threshold, input);
-            } else if p < 0.6 {
+            } else if p < 0.8 {
                 // 一つのコンテナの置く位置を変更する
                 self.action_change_container_p(threshold, input);
-            } else if p < 0.8 {
+            } else if p < 0.9 {
                 // 一つのジョブを移動する
                 self.action_move_one_job(threshold, input);
-            } else if p < 0.9 {
+            } else if p < 0.95 {
                 // クレーン間でジョブをスワップする
                 self.action_swap_job_between_cranes(threshold, input);
             } else {
@@ -74,8 +97,9 @@ impl Solver {
             // コンテナを置く位置を入れ替える
         }
 
-        eprintln!("[end]    upper-level-score: {}", self.score);
+        eprintln!("[end]    upper-level-score: {:?}", self.score);
         // assert!(self.eval_schedules() < 1_000input);
+        self.eval_schedules(input);
 
         let container_occupations = create_container_occupations(&self.schedules, input);
         let (mut crane_log, _) = optimize_lower_level(&self.schedules, &container_occupations);
@@ -112,9 +136,9 @@ impl Solver {
             (self.schedules[ci][sj].job, self.schedules[ci][si].job);
 
         let new_score = self.eval_schedules(input);
-        if new_score - self.score < threshold {
+        if new_score.to_score() - self.score.to_score() < threshold {
+            eprintln!("{:?} -> {:?}", self.score, new_score);
             self.score = new_score;
-            // eprintln!("[{_t}] {} -> {}", self.score, new_score);
         } else {
             (self.schedules[ci][si].job, self.schedules[ci][sj].job) =
                 (self.schedules[ci][sj].job, self.schedules[ci][si].job);
@@ -134,9 +158,9 @@ impl Solver {
             (self.schedules[cj][sj].job, self.schedules[ci][si].job);
 
         let new_score = self.eval_schedules(input);
-        if new_score - self.score < threshold {
+        if new_score.to_score() - self.score.to_score() < threshold {
+            eprintln!("{:?} -> {:?}", self.score, new_score);
             self.score = new_score;
-            // eprintln!("[{_t}] {} -> {}", self.score, new_score);
         } else {
             (self.schedules[ci][si].job, self.schedules[cj][sj].job) =
                 (self.schedules[cj][sj].job, self.schedules[ci][si].job);
@@ -156,8 +180,8 @@ impl Solver {
         self.schedules[cj].insert(sj, s);
 
         let new_score = self.eval_schedules(input);
-        if new_score - self.score < threshold {
-            // eprintln!("[{_t}] {} -> {}", self.score, new_score);
+        if new_score.to_score() - self.score.to_score() < threshold {
+            eprintln!("{:?} -> {:?}", self.score, new_score);
             self.score = new_score;
         } else {
             let s = self.schedules[cj].remove(sj);
@@ -184,9 +208,9 @@ impl Solver {
         }
         let new_score = self.eval_schedules(input);
 
-        if new_score - self.score < threshold {
+        if new_score.to_score() - self.score.to_score() < threshold {
+            eprintln!("{:?} -> {:?}", self.score, new_score);
             self.score = new_score;
-            // eprintln!("[{_t}] {} -> {}", cur_score, new_score);
         } else {
             self.schedules[ci] = a;
         }
@@ -214,7 +238,7 @@ impl Solver {
         let Some(prev_p) = prev_p else { return };
 
         let new_score = self.eval_schedules(input);
-        if new_score - self.score < threshold {
+        if new_score.to_score() - self.score.to_score() < threshold {
             // eprintln!("[{_t}] {} ->s {}", self.score, new_score);
             self.score = new_score;
         } else {
@@ -234,41 +258,44 @@ impl Solver {
         }
     }
 
-    fn eval_schedules(&mut self, input: &Input) -> i64 {
+    fn eval_schedules(&mut self, input: &Input) -> Score {
         let raw_score = (0..N)
             .filter(|&ci| self.schedules[ci].len() > 0)
             .map(|ci| self.schedules[ci].last().unwrap().end_t)
             .max()
             .unwrap() as i64;
-        // TODO: 必要なところまで計算する
+
         let constraint_penalty = self.eval_constraints();
         if constraint_penalty > 0 {
-            return raw_score + constraint_penalty * 1_000_000;
+            return Score {
+                raw_score,
+                constraint_penalty,
+                container_occupation_penalty: 0,
+                schedule_feasibility_penalty: 0,
+            };
         }
 
         let container_occupations = create_container_occupations(&self.schedules, input);
-        for (i, j) in iproduct!(0..N, 0..N) {
-            eprintln!("({i}, {j}) = {:?}", container_occupations[i][j]);
-        }
         let container_occupation_penalty = self.eval_container_occupation(&container_occupations);
         if container_occupation_penalty > 0 {
-            return raw_score
-                + constraint_penalty * 1_000_000 * container_occupation_penalty * 1_000;
+            return Score {
+                raw_score,
+                constraint_penalty,
+                container_occupation_penalty,
+                schedule_feasibility_penalty: 0,
+            };
         }
 
         let schedule_feasibility_penalty = self.eval_schedule_feasibility(&container_occupations);
 
-        eprintln!(
-            "{} {} {} {}",
+        let score = Score {
             raw_score,
             constraint_penalty,
             container_occupation_penalty,
-            schedule_feasibility_penalty
-        );
-        raw_score
-            + constraint_penalty * 1_000_000
-            + container_occupation_penalty * 1_000
-            + schedule_feasibility_penalty * 1_000
+            schedule_feasibility_penalty,
+        };
+        eprintln!("{:?}", score);
+        score
     }
 
     fn eval_schedule_feasibility(
@@ -288,7 +315,6 @@ impl Solver {
                     let (l2, r2, _) = occupations[i][j][k2];
                     let (l, r) = (l1.max(l2), r1.min(r2));
                     if r > l {
-                        eprintln!("{} {} {} {} {} {} {} {}", i, j, l1, r1, l2, r2, r, l);
                         penalty += r - l;
                     }
                 }
@@ -331,13 +357,6 @@ impl Solver {
                     let interval = 2;
                     if prev_s.start_t + interval > next_s.start_t {
                         penalty += prev_s.start_t + interval - next_s.start_t;
-                        assert!(
-                            penalty < 1_000_000_000_000,
-                            "{:?} {:?} {:?}",
-                            c,
-                            prev_s,
-                            next_s
-                        );
                     }
                 }
                 Constraint::End(prev_job_i, next_job_i) => {
@@ -348,14 +367,6 @@ impl Solver {
                     let interval = 2;
                     if prev_s.end_t + interval > next_s.end_t {
                         penalty += prev_s.end_t + interval - next_s.end_t;
-                        assert!(
-                            penalty < 1_000_000_000_000,
-                            "{:?} {:?} {:?} {}",
-                            c,
-                            prev_s,
-                            next_s,
-                            prev_s.end_t + interval - next_s.end_t
-                        );
                     }
                 }
                 Constraint::Consecutive(prev_job_i, next_job_i) => {
@@ -366,13 +377,6 @@ impl Solver {
                     let interval = dist(prev_s.job.to, next_s.job.from) + 1;
                     if prev_s.end_t + interval > next_s.start_t {
                         penalty += prev_s.end_t + interval - next_s.start_t;
-                        assert!(
-                            penalty < 1_000_000_000_000,
-                            "{:?} {:?} {:?}",
-                            c,
-                            prev_s,
-                            next_s
-                        );
                     }
                 }
                 Constraint::FirstJob(job_i) => {
@@ -380,7 +384,6 @@ impl Solver {
                     let interval = dist((mp[job_i].0, 0), s.job.from);
                     if s.start_t < interval {
                         penalty += interval - s.start_t;
-                        assert!(penalty < 1_000_000_000_000, "{:?} {:?}", c, s);
                     }
                 }
                 Constraint::Job(job_i) => {
@@ -389,7 +392,6 @@ impl Solver {
                     assert_eq!(s.job.idx, job_i);
                     if s.start_t + interval > s.end_t {
                         penalty += s.start_t + interval - s.end_t;
-                        assert!(penalty < 1_000_000_000_000, "{:?}", s);
                     }
                 }
             }
