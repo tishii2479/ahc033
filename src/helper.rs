@@ -162,7 +162,7 @@ impl PathFinder {
                     container_occupations,
                 );
                 let next = self.dp[t][i][j].1 + cost;
-                // if ci == 3 && t <= 5 {
+                // if ci == 0 && t <= 5 {
                 //     eprintln!(
                 //         "[{t}] {:?} -> {:?} = {}, {}",
                 //         (i, j),
@@ -170,6 +170,7 @@ impl PathFinder {
                 //         self.dp[t][i][j].1,
                 //         cost
                 //     );
+                // }
                 if self.dp[t + 1][ni][nj].0 != self.id || next < self.dp[t + 1][ni][nj].1 {
                     self.dp[t + 1][ni][nj] = (self.id, next, (i, j));
                 }
@@ -198,10 +199,11 @@ impl PathFinder {
         let mut cur = to;
         let mut cur_t = end_t;
         while cur != from || start_t != cur_t {
-            cur_t -= 1;
             let par = self.dp[cur_t][cur.0][cur.1].2;
+            // assert!(self.dp[cur_t - 1][par.0][par.1].1 < self.dp[cur_t][cur.0][cur.1].1);
             path.push(cur);
             cur = par;
+            cur_t -= 1;
         }
         path.reverse();
         path

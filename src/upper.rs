@@ -8,383 +8,418 @@ pub fn optimize_upper_level(
     jobs: Vec<Job>,
     input: &Input,
 ) -> (Vec<Vec<Schedule>>, Vec<Vec<Vec<Option<usize>>>>) {
-    let mut path_finder = PathFinder::new();
-    let constraints = create_constraints(&jobs, input);
-    let mut assigned_jobs: Vec<Vec<Job>> = vec![vec![]; N];
-    for job in jobs.iter() {
-        assigned_jobs[rnd::gen_index(N)].push(job.clone());
-        // assigned_jobs[0].push(job.clone());
-    }
-    let mut schedules = jobs_to_schedules(assigned_jobs);
-    let mut cur_score = eval_schedules(&schedules, &constraints, &jobs, &mut path_finder);
-    eprintln!("[start]  upper-level-score: {}", cur_score);
-
+    let mut solver = Solver::new(jobs, input);
     let iteration = 100_000;
-    for _t in 0..iteration {
-        let p = rnd::nextf();
-        let start_temp = if cur_score > 1_000_000 {
-            10_000
-        } else if cur_score > 1000 {
-            100
-        } else {
-            10
-        } as f64;
-        let progress = _t as f64 / iteration as f64;
-        let cur_temp = start_temp.powf(1. - progress);
-        let threshold = -(cur_temp * progress) * rnd::nextf().ln();
-        let threshold = threshold.round() as i64;
-        // dbg!(cur_score, threshold);
-        // let threshold = if cur_score > 1_000_000 { 1_000 } else { 1 };
-        if p < 0.2 {
-            // 1. 一つのスケジュールの時間を伸ばす・減らす
-            let ci = rnd::gen_index(N);
-            if schedules[ci].len() == 0 {
-                continue;
-            }
-            let d = if rnd::nextf() < 0.5 { 1 } else { !0 };
-            let t = rnd::gen_index(schedules[ci].last().unwrap().end_t);
-            let t = if d == 1 { t } else { t.max(1) }; // オーバーフロー対策
-            let a = schedules[ci].clone();
-            for s in schedules[ci].iter_mut() {
-                if s.start_t >= t {
-                    s.start_t += d;
-                }
-                if s.end_t >= t && s.start_t < s.end_t + d {
-                    s.end_t += d;
-                }
-            }
-            let new_score = eval_schedules(&schedules, &constraints, &jobs, &mut path_finder);
+    solver.solve(iteration);
+    let container_occupations = create_container_occupations_tensor(&solver.schedules, input);
+    (solver.schedules, container_occupations)
+}
 
-            if new_score - cur_score < threshold {
-                cur_score = new_score;
-                eprintln!("[{_t}] {} -> {}", cur_score, new_score);
+struct Solver {
+    jobs: Vec<Job>,
+    schedules: Vec<Vec<Schedule>>,
+    constraints: Vec<Constraint>,
+    path_finder: PathFinder,
+    score: i64,
+}
+
+impl Solver {
+    fn new(jobs: Vec<Job>, input: &Input) -> Solver {
+        let path_finder = PathFinder::new();
+        let constraints = create_constraints(&jobs, input);
+        let mut assigned_jobs: Vec<Vec<Job>> = vec![vec![]; N];
+        for job in jobs.iter() {
+            assigned_jobs[rnd::gen_index(N)].push(job.clone());
+            // assigned_jobs[0].push(job.clone());
+        }
+        let schedules = jobs_to_schedules(assigned_jobs);
+
+        let mut solver = Solver {
+            jobs,
+            schedules,
+            constraints,
+            path_finder,
+            score: 0,
+        };
+        solver.score = solver.eval_schedules();
+        solver
+    }
+
+    fn solve(&mut self, iteration: usize) {
+        eprintln!("[start]  upper-level-score: {}", self.score);
+
+        for _t in 0..iteration {
+            let p = rnd::nextf();
+            let start_temp = if self.score > 1_000_000 {
+                10_000
+            } else if self.score > 1000 {
+                100
             } else {
-                schedules[ci] = a;
+                1
+            } as f64;
+            let progress = _t as f64 / iteration as f64;
+            let cur_temp = start_temp.powf(1. - progress);
+            let threshold = -(cur_temp * progress) * rnd::nextf().ln();
+            let threshold = threshold.round() as i64;
+            // dbg!(self.score, threshold);
+            let threshold = if self.score > 1_000_000 { 1_000 } else { 1 };
+            if p < 0.2 {
+                // 1. 一つのスケジュールの時間を伸ばす・減らす
+                self.action_shift_one_time(threshold);
+            } else if p < 0.6 {
+                // 一つのコンテナの置く位置を変更する
+                self.action_change_container_p(threshold);
+            } else if p < 0.8 {
+                // 3. 一つのジョブを移動する
+                self.action_move_one_job(threshold);
+            } else if p < 0.9 {
+                // 4. クレーン間でジョブをスワップする
+                self.action_swap_job_between_cranes(threshold);
+            } else {
+                // 5. クレーン内でジョブをスワップする
+                self.action_swap_job_in_crane(threshold);
             }
-        } else if p < 0.6 {
-            // 一つのコンテナの置く位置を変更する
-            let c = rnd::gen_index(N * N);
-            let mut prev_p = None;
-            let new_p = (rnd::gen_index(N), rnd::gen_range(1, N - 1));
+            // 2. 一時点のスケジュールを全てのクレーンで伸ばす
+        }
+
+        let container_occupations = create_container_occupations(&self.schedules);
+        for (i, j) in iproduct!(0..N, 0..N) {
+            eprintln!("{} {}, {:?}", i, j, container_occupations[i][j]);
+        }
+        eprintln!("{}", self.jobs.len());
+        for ci in 1..N {
+            for s in self.schedules[ci].iter() {
+                // s.start_t + 1 -> s.end_tにs.job.from -> s.job.toへの経路が存在するかどうか
+                // 存在しない場合、衝突したコンテナの個数をペナルティとして加える
+                let a = self.path_finder.find_path_easy(
+                    s.start_t + 1,
+                    s.end_t,
+                    s.job.from,
+                    s.job.to,
+                    &container_occupations,
+                    true,
+                );
+                if a > 0 {
+                    dbg!(ci, a, s);
+                }
+            }
+        }
+
+        eprintln!("[end]    upper-level-score: {}", self.score);
+        assert!(self.eval_schedules() < 1_000);
+    }
+
+    fn action_swap_job_in_crane(&mut self, threshold: i64) {
+        let ci = rnd::gen_index(N);
+        if self.schedules[ci].len() < 2 {
+            return;
+        }
+        let si = rnd::gen_index(self.schedules[ci].len() - 1);
+        let sj = si + 1;
+        // let (si, sj) = (
+        //     rnd::gen_index(self.schedules[ci].len()),
+        //     rnd::gen_index(self.schedules[ci].len()),
+        // );
+        if si == sj {
+            return;
+        }
+        (self.schedules[ci][si].job, self.schedules[ci][sj].job) =
+            (self.schedules[ci][sj].job, self.schedules[ci][si].job);
+
+        let new_score = self.eval_schedules();
+        if new_score - self.score < threshold {
+            self.score = new_score;
+            // eprintln!("[{_t}] {} -> {}", self.score, new_score);
+        } else {
+            (self.schedules[ci][si].job, self.schedules[ci][sj].job) =
+                (self.schedules[ci][sj].job, self.schedules[ci][si].job);
+        }
+    }
+
+    fn action_swap_job_between_cranes(&mut self, threshold: i64) {
+        let (ci, cj) = (rnd::gen_index(N), rnd::gen_index(N));
+        if ci == cj || self.schedules[ci].len() == 0 || self.schedules[cj].len() == 0 {
+            return;
+        }
+        let (si, sj) = (
+            rnd::gen_index(self.schedules[ci].len()),
+            rnd::gen_index(self.schedules[cj].len()),
+        );
+        (self.schedules[ci][si].job, self.schedules[cj][sj].job) =
+            (self.schedules[cj][sj].job, self.schedules[ci][si].job);
+
+        let new_score = self.eval_schedules();
+        if new_score - self.score < threshold {
+            self.score = new_score;
+            // eprintln!("[{_t}] {} -> {}", self.score, new_score);
+        } else {
+            (self.schedules[ci][si].job, self.schedules[cj][sj].job) =
+                (self.schedules[cj][sj].job, self.schedules[ci][si].job);
+        }
+    }
+
+    fn action_move_one_job(&mut self, threshold: i64) {
+        let (ci, cj) = (rnd::gen_index(N), rnd::gen_index(N));
+        if ci == cj || self.schedules[ci].len() == 0 {
+            return;
+        }
+        let (si, sj) = (
+            rnd::gen_index(self.schedules[ci].len()),
+            rnd::gen_index(self.schedules[cj].len() + 1),
+        );
+        let s = self.schedules[ci].remove(si);
+        self.schedules[cj].insert(sj, s);
+
+        let new_score = self.eval_schedules();
+        if new_score - self.score < threshold {
+            // eprintln!("[{_t}] {} -> {}", self.score, new_score);
+            self.score = new_score;
+        } else {
+            let s = self.schedules[cj].remove(sj);
+            self.schedules[ci].insert(si, s);
+        }
+    }
+
+    fn action_shift_one_time(&mut self, threshold: i64) {
+        let ci = rnd::gen_index(N);
+        if self.schedules[ci].len() == 0 {
+            return;
+        }
+        let d = if rnd::nextf() < 0.5 { 1 } else { !0 };
+        let t = rnd::gen_index(self.schedules[ci].last().unwrap().end_t);
+        let t = if d == 1 { t } else { t.max(1) }; // オーバーフロー対策
+        let a = self.schedules[ci].clone();
+        for s in self.schedules[ci].iter_mut() {
+            if s.start_t >= t {
+                s.start_t += d;
+            }
+            if s.end_t >= t && s.start_t < s.end_t + d {
+                s.end_t += d;
+            }
+        }
+        let new_score = self.eval_schedules();
+
+        if new_score - self.score < threshold {
+            self.score = new_score;
+            // eprintln!("[{_t}] {} -> {}", cur_score, new_score);
+        } else {
+            self.schedules[ci] = a;
+        }
+    }
+
+    fn action_change_container_p(&mut self, threshold: i64) {
+        let c = rnd::gen_index(N * N);
+        let mut prev_p = None;
+        let new_p = (rnd::gen_index(N), rnd::gen_range(1, N - 1));
+        for i in 0..N {
+            for s in self.schedules[i].iter_mut() {
+                if s.job.c != c {
+                    continue;
+                }
+                if !s.job.is_out_job() {
+                    prev_p = Some(s.job.to);
+                    s.job.to = new_p;
+                }
+                if !s.job.is_in_job() {
+                    prev_p = Some(s.job.from);
+                    s.job.from = new_p;
+                }
+            }
+        }
+        let Some(prev_p) = prev_p else { return };
+
+        let new_score = self.eval_schedules();
+        if new_score - self.score < threshold {
+            // eprintln!("[{_t}] {} ->s {}", self.score, new_score);
+            self.score = new_score;
+        } else {
             for i in 0..N {
-                for s in schedules[i].iter_mut() {
+                for s in self.schedules[i].iter_mut() {
                     if s.job.c != c {
                         continue;
                     }
                     if !s.job.is_out_job() {
-                        prev_p = Some(s.job.to);
-                        s.job.to = new_p;
+                        s.job.to = prev_p;
                     }
                     if !s.job.is_in_job() {
-                        prev_p = Some(s.job.from);
-                        s.job.from = new_p;
-                    }
-                }
-            }
-            let Some(prev_p) = prev_p else { continue };
-
-            let new_score = eval_schedules(&schedules, &constraints, &jobs, &mut path_finder);
-            if new_score - cur_score < threshold {
-                eprintln!("[{_t}] {} -> {}", cur_score, new_score);
-                cur_score = new_score;
-            } else {
-                for i in 0..N {
-                    for s in schedules[i].iter_mut() {
-                        if s.job.c != c {
-                            continue;
-                        }
-                        if !s.job.is_out_job() {
-                            s.job.to = prev_p;
-                        }
-                        if !s.job.is_in_job() {
-                            s.job.from = prev_p;
-                        }
-                    }
-                }
-            }
-        } else if p < 0.8 {
-            // 3. 一つのジョブを移動する
-            let (ci, cj) = (rnd::gen_index(N), rnd::gen_index(N));
-            if ci == cj || schedules[ci].len() == 0 {
-                continue;
-            }
-            let (si, sj) = (
-                rnd::gen_index(schedules[ci].len()),
-                rnd::gen_index(schedules[cj].len() + 1),
-            );
-            let s = schedules[ci].remove(si);
-            schedules[cj].insert(sj, s);
-
-            let new_score = eval_schedules(&schedules, &constraints, &jobs, &mut path_finder);
-            if new_score - cur_score < threshold {
-                eprintln!("[{_t}] {} -> {}", cur_score, new_score);
-                cur_score = new_score;
-            } else {
-                let s = schedules[cj].remove(sj);
-                schedules[ci].insert(si, s);
-            }
-        } else if p < 0.9 {
-            // 4. クレーン間でジョブをスワップする
-            let (ci, cj) = (rnd::gen_index(N), rnd::gen_index(N));
-            if ci == cj || schedules[ci].len() == 0 || schedules[cj].len() == 0 {
-                continue;
-            }
-            let (si, sj) = (
-                rnd::gen_index(schedules[ci].len()),
-                rnd::gen_index(schedules[cj].len()),
-            );
-            (schedules[ci][si].job, schedules[cj][sj].job) =
-                (schedules[cj][sj].job, schedules[ci][si].job);
-
-            let new_score = eval_schedules(&schedules, &constraints, &jobs, &mut path_finder);
-            if new_score - cur_score < threshold {
-                cur_score = new_score;
-                eprintln!("[{_t}] {} -> {}", cur_score, new_score);
-            } else {
-                (schedules[ci][si].job, schedules[cj][sj].job) =
-                    (schedules[cj][sj].job, schedules[ci][si].job);
-            }
-        } else {
-            // 5. クレーン内でジョブをスワップする
-            let ci = rnd::gen_index(N);
-            if schedules[ci].len() < 2 {
-                continue;
-            }
-            let (si, sj) = (
-                rnd::gen_index(schedules[ci].len()),
-                rnd::gen_index(schedules[ci].len()),
-            );
-            if si == sj {
-                continue;
-            }
-            (schedules[ci][si].job, schedules[ci][sj].job) =
-                (schedules[ci][sj].job, schedules[ci][si].job);
-
-            let new_score = eval_schedules(&schedules, &constraints, &jobs, &mut path_finder);
-            if new_score - cur_score < threshold {
-                cur_score = new_score;
-                eprintln!("[{_t}] {} -> {}", cur_score, new_score);
-            } else {
-                (schedules[ci][si].job, schedules[ci][sj].job) =
-                    (schedules[ci][sj].job, schedules[ci][si].job);
-            }
-        }
-        // 2. 一時点のスケジュールを全てのクレーンで伸ばす
-    }
-
-    let container_occupations = create_container_occupations(&schedules);
-    for (i, j) in iproduct!(0..N, 0..N) {
-        eprintln!("{} {}, {:?}", i, j, container_occupations[i][j]);
-    }
-    eprintln!("{}", jobs.len());
-    for ci in 1..N {
-        for s in schedules[ci].iter() {
-            // s.start_t + 1 -> s.end_tにs.job.from -> s.job.toへの経路が存在するかどうか
-            // 存在しない場合、衝突したコンテナの個数をペナルティとして加える
-            let a = path_finder.find_path_easy(
-                s.start_t + 1,
-                s.end_t,
-                s.job.from,
-                s.job.to,
-                &container_occupations,
-                true,
-            );
-            if a > 0 {
-                dbg!(ci, a, s);
-            }
-        }
-    }
-
-    eprintln!("[end]    upper-level-score: {}", cur_score);
-    assert!(eval_schedules(&schedules, &constraints, &jobs, &mut path_finder) < 1_000);
-    let container_occupations = create_container_occupations_tensor(&schedules, input);
-    (schedules, container_occupations)
-}
-
-fn eval_schedules(
-    schedules: &Vec<Vec<Schedule>>,
-    constraints: &Vec<Constraint>,
-    jobs: &Vec<Job>,
-    path_finder: &mut PathFinder,
-) -> i64 {
-    let raw_score = (0..N)
-        .filter(|&ci| schedules[ci].len() > 0)
-        .map(|ci| schedules[ci].last().unwrap().end_t)
-        .max()
-        .unwrap() as i64;
-    // TODO: 必要なところまで計算する
-    let constraint_penalty = eval_constraints(schedules, &constraints, jobs);
-    if constraint_penalty > 0 {
-        return raw_score + constraint_penalty * 1_000_000;
-    }
-
-    let container_occupations = create_container_occupations(schedules);
-    let container_occupation_penalty = eval_container_occupation(&container_occupations);
-
-    let schedule_feasibility_penalty =
-        eval_schedule_feasibility(schedules, &container_occupations, path_finder);
-
-    // dbg!(
-    //     raw_score,
-    //     constraint_penalty,
-    //     container_occupation_penalty,
-    //     schedule_feasibility_penalty
-    // );
-    raw_score
-        + constraint_penalty * 1_000_000
-        + container_occupation_penalty * 1_000
-        + schedule_feasibility_penalty * 1_000
-}
-
-fn eval_schedule_feasibility(
-    schedules: &Vec<Vec<Schedule>>,
-    container_occupations: &Vec<Vec<Vec<(usize, usize, usize)>>>,
-    path_finder: &mut PathFinder,
-) -> i64 {
-    let mut penalty = 0;
-    // クレーン0はチェックする必要がない
-    for ci in 1..N {
-        for s in schedules[ci].iter() {
-            // s.start_t + 1 -> s.end_tにs.job.from -> s.job.toへの経路が存在するかどうか
-            // 存在しない場合、衝突したコンテナの個数をペナルティとして加える
-            penalty += path_finder.find_path_easy(
-                s.start_t + 1,
-                s.end_t,
-                s.job.from,
-                s.job.to,
-                container_occupations,
-                false,
-            );
-        }
-    }
-    penalty as i64
-}
-
-fn eval_container_occupation(occupations: &Vec<Vec<Vec<(usize, usize, usize)>>>) -> i64 {
-    let mut penalty = 0;
-    for i in 0..N {
-        for j in 0..N {
-            for k1 in 0..occupations[i][j].len() {
-                for k2 in k1 + 1..occupations[i][j].len() {
-                    let (l1, r1, _) = occupations[i][j][k1];
-                    let (l2, r2, _) = occupations[i][j][k2];
-                    let (l, r) = (l1.max(l2), r1.min(r2));
-                    if r > l {
-                        penalty += r - l;
+                        s.job.from = prev_p;
                     }
                 }
             }
         }
     }
-    penalty as i64
-}
 
-fn eval_constraints(
-    schedules: &Vec<Vec<Schedule>>,
-    constraints: &Vec<Constraint>,
-    jobs: &Vec<Job>,
-) -> i64 {
-    // TODO: .clone()しない
-    let mut constraints = constraints.clone();
-    for i in 0..N {
-        for j in 0..schedules[i].len() {
-            if j == 0 {
-                constraints.push(Constraint::FirstJob(schedules[i][j].job.idx));
-            } else {
-                constraints.push(Constraint::Consecutive(
-                    schedules[i][j - 1].job.idx,
-                    schedules[i][j].job.idx,
-                ));
-            }
+    fn eval_schedules(&mut self) -> i64 {
+        let raw_score = (0..N)
+            .filter(|&ci| self.schedules[ci].len() > 0)
+            .map(|ci| self.schedules[ci].last().unwrap().end_t)
+            .max()
+            .unwrap() as i64;
+        // TODO: 必要なところまで計算する
+        let constraint_penalty = self.eval_constraints();
+        if constraint_penalty > 0 {
+            return raw_score + constraint_penalty * 1_000_000;
         }
+
+        let container_occupations = create_container_occupations(&self.schedules);
+        let container_occupation_penalty = self.eval_container_occupation(&container_occupations);
+
+        let schedule_feasibility_penalty = self.eval_schedule_feasibility(&container_occupations);
+
+        // dbg!(
+        //     raw_score,
+        //     constraint_penalty,
+        //     container_occupation_penalty,
+        //     schedule_feasibility_penalty
+        // );
+        raw_score
+            + constraint_penalty * 1_000_000
+            + container_occupation_penalty * 1_000
+            + schedule_feasibility_penalty * 1_000
     }
 
-    let mut mp = vec![(0, 0); jobs.len()];
-    for i in 0..N {
-        for (j, s) in schedules[i].iter().enumerate() {
-            mp[s.job.idx] = (i, j);
+    fn eval_schedule_feasibility(
+        &mut self,
+        container_occupations: &Vec<Vec<Vec<(usize, usize, usize)>>>,
+    ) -> i64 {
+        let mut penalty = 0;
+        // クレーン0はチェックする必要がない
+        for ci in 1..N {
+            for s in self.schedules[ci].iter() {
+                // s.start_t + 1 -> s.end_tにs.job.from -> s.job.toへの経路が存在するかどうか
+                // 存在しない場合、衝突したコンテナの個数をペナルティとして加える
+                penalty += self.path_finder.find_path_easy(
+                    s.start_t + 1,
+                    s.end_t,
+                    s.job.from,
+                    s.job.to,
+                    container_occupations,
+                    false,
+                );
+            }
         }
+        penalty as i64
     }
 
-    let mut penalty = 0;
-    for &c in constraints.iter() {
-        match c {
-            Constraint::Start(prev_job_i, next_job_i) => {
-                let (prev_s, next_s) = (
-                    &schedules[mp[prev_job_i].0][mp[prev_job_i].1],
-                    &schedules[mp[next_job_i].0][mp[next_job_i].1],
-                );
-                let interval = 2;
-                if prev_s.start_t + interval > next_s.start_t {
-                    penalty += prev_s.start_t + interval - next_s.start_t;
-                    assert!(
-                        penalty < 1_000_000_000_000,
-                        "{:?} {:?} {:?}",
-                        c,
-                        prev_s,
-                        next_s
-                    );
-                }
-            }
-            Constraint::End(prev_job_i, next_job_i) => {
-                let (prev_s, next_s) = (
-                    &schedules[mp[prev_job_i].0][mp[prev_job_i].1],
-                    &schedules[mp[next_job_i].0][mp[next_job_i].1],
-                );
-                let interval = 2;
-                if prev_s.end_t + interval > next_s.end_t {
-                    penalty += prev_s.end_t + interval - next_s.end_t;
-                    assert!(
-                        penalty < 1_000_000_000_000,
-                        "{:?} {:?} {:?} {}",
-                        c,
-                        prev_s,
-                        next_s,
-                        prev_s.end_t + interval - next_s.end_t
-                    );
-                }
-            }
-            Constraint::Consecutive(prev_job_i, next_job_i) => {
-                let (prev_s, next_s) = (
-                    &schedules[mp[prev_job_i].0][mp[prev_job_i].1],
-                    &schedules[mp[next_job_i].0][mp[next_job_i].1],
-                );
-                // let interval = dist(prev_s.job.to, next_s.job.from) + 1;
-                let interval = dist(prev_s.job.to, next_s.job.from) + 10;
-                if prev_s.end_t + interval > next_s.start_t {
-                    penalty += prev_s.end_t + interval - next_s.start_t;
-                    assert!(
-                        penalty < 1_000_000_000_000,
-                        "{:?} {:?} {:?}",
-                        c,
-                        prev_s,
-                        next_s
-                    );
-                }
-            }
-            Constraint::FirstJob(job_i) => {
-                let s = &schedules[mp[job_i].0][mp[job_i].1];
-                let interval = dist((mp[job_i].0, 0), s.job.from);
-                let interval = dist((mp[job_i].0, 0), s.job.from) + 10;
-                if s.start_t < interval {
-                    penalty += interval - s.start_t;
-                    assert!(penalty < 1_000_000_000_000, "{:?} {:?}", c, s);
-                }
-            }
-            Constraint::Job(job_i) => {
-                let s = &schedules[mp[job_i].0][mp[job_i].1];
-                let interval = dist(s.job.from, s.job.to) + 2;
-                let interval = dist(s.job.from, s.job.to) + 10;
-                assert_eq!(s.job.idx, job_i);
-                if s.start_t + interval > s.end_t {
-                    penalty += s.start_t + interval - s.end_t;
-                    assert!(penalty < 1_000_000_000_000, "{:?}", s);
+    fn eval_container_occupation(&self, occupations: &Vec<Vec<Vec<(usize, usize, usize)>>>) -> i64 {
+        let mut penalty = 0;
+        for i in 0..N {
+            for j in 0..N {
+                for k1 in 0..occupations[i][j].len() {
+                    for k2 in k1 + 1..occupations[i][j].len() {
+                        let (l1, r1, _) = occupations[i][j][k1];
+                        let (l2, r2, _) = occupations[i][j][k2];
+                        let (l, r) = (l1.max(l2), r1.min(r2));
+                        if r > l {
+                            penalty += r - l;
+                        }
+                    }
                 }
             }
         }
+        penalty as i64
     }
 
-    penalty as i64
+    fn eval_constraints(&self) -> i64 {
+        // TODO: .clone()しない
+        let mut constraints = self.constraints.clone();
+        for i in 0..N {
+            for j in 0..self.schedules[i].len() {
+                if j == 0 {
+                    constraints.push(Constraint::FirstJob(self.schedules[i][j].job.idx));
+                } else {
+                    constraints.push(Constraint::Consecutive(
+                        self.schedules[i][j - 1].job.idx,
+                        self.schedules[i][j].job.idx,
+                    ));
+                }
+            }
+        }
+
+        let mut mp = vec![(0, 0); self.jobs.len()];
+        for i in 0..N {
+            for (j, s) in self.schedules[i].iter().enumerate() {
+                mp[s.job.idx] = (i, j);
+            }
+        }
+
+        let mut penalty = 0;
+        for &c in constraints.iter() {
+            match c {
+                Constraint::Start(prev_job_i, next_job_i) => {
+                    let (prev_s, next_s) = (
+                        &self.schedules[mp[prev_job_i].0][mp[prev_job_i].1],
+                        &self.schedules[mp[next_job_i].0][mp[next_job_i].1],
+                    );
+                    let interval = 2;
+                    if prev_s.start_t + interval > next_s.start_t {
+                        penalty += prev_s.start_t + interval - next_s.start_t;
+                        assert!(
+                            penalty < 1_000_000_000_000,
+                            "{:?} {:?} {:?}",
+                            c,
+                            prev_s,
+                            next_s
+                        );
+                    }
+                }
+                Constraint::End(prev_job_i, next_job_i) => {
+                    let (prev_s, next_s) = (
+                        &self.schedules[mp[prev_job_i].0][mp[prev_job_i].1],
+                        &self.schedules[mp[next_job_i].0][mp[next_job_i].1],
+                    );
+                    let interval = 2;
+                    if prev_s.end_t + interval > next_s.end_t {
+                        penalty += prev_s.end_t + interval - next_s.end_t;
+                        assert!(
+                            penalty < 1_000_000_000_000,
+                            "{:?} {:?} {:?} {}",
+                            c,
+                            prev_s,
+                            next_s,
+                            prev_s.end_t + interval - next_s.end_t
+                        );
+                    }
+                }
+                Constraint::Consecutive(prev_job_i, next_job_i) => {
+                    let (prev_s, next_s) = (
+                        &self.schedules[mp[prev_job_i].0][mp[prev_job_i].1],
+                        &self.schedules[mp[next_job_i].0][mp[next_job_i].1],
+                    );
+                    let interval = dist(prev_s.job.to, next_s.job.from) + 1;
+                    if prev_s.end_t + interval > next_s.start_t {
+                        penalty += prev_s.end_t + interval - next_s.start_t;
+                        assert!(
+                            penalty < 1_000_000_000_000,
+                            "{:?} {:?} {:?}",
+                            c,
+                            prev_s,
+                            next_s
+                        );
+                    }
+                }
+                Constraint::FirstJob(job_i) => {
+                    let s = &self.schedules[mp[job_i].0][mp[job_i].1];
+                    let interval = dist((mp[job_i].0, 0), s.job.from);
+                    if s.start_t < interval {
+                        penalty += interval - s.start_t;
+                        assert!(penalty < 1_000_000_000_000, "{:?} {:?}", c, s);
+                    }
+                }
+                Constraint::Job(job_i) => {
+                    let s = &self.schedules[mp[job_i].0][mp[job_i].1];
+                    let interval = dist(s.job.from, s.job.to) + 2;
+                    assert_eq!(s.job.idx, job_i);
+                    if s.start_t + interval > s.end_t {
+                        penalty += s.start_t + interval - s.end_t;
+                        assert!(penalty < 1_000_000_000_000, "{:?}", s);
+                    }
+                }
+            }
+        }
+
+        penalty as i64
+    }
 }
 
 fn create_constraints(jobs: &Vec<Job>, input: &Input) -> Vec<Constraint> {
