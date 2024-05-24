@@ -267,13 +267,18 @@ pub fn jobs_to_schedules(jobs: Vec<Vec<Job>>) -> Vec<Vec<Schedule>> {
 
 pub fn create_container_occupations(
     schedules: &Vec<Vec<Schedule>>,
+    input: &Input,
 ) -> Vec<Vec<Vec<(usize, usize, usize)>>> {
     let mut container_time_range = vec![(None, None); N * N];
     let mut container_pos = vec![None; N * N];
+    let mut t_in = vec![vec![0; N]; N];
 
     for ci in 0..N {
         for s in schedules[ci].iter() {
-            if !s.job.is_in_job() {
+            if s.job.is_in_job() {
+                let (i, j) = input.c_to_a_ij[s.job.c];
+                t_in[i][j] = s.start_t;
+            } else {
                 container_time_range[s.job.c].1 = Some(s.start_t);
             }
 
@@ -294,44 +299,13 @@ pub fn create_container_occupations(
         occupations[p.0][p.1].push((l, r, c));
     }
 
-    occupations
-}
-
-pub fn create_container_occupations_tensor(
-    schedules: &Vec<Vec<Schedule>>,
-    input: &Input,
-) -> Vec<Vec<Vec<Option<usize>>>> {
-    let mut container_occupations = vec![vec![vec![None; N]; N]; MAX_T];
-    let mut t_in = vec![vec![0; N]; N];
-
-    let occupations = create_container_occupations(schedules);
-    for ci in 0..N {
-        for s in schedules[ci].iter() {
-            if s.job.is_in_job() {
-                let (i, j) = input.c_to_a_ij[s.job.c];
-                t_in[i][j] = s.start_t;
-            }
-        }
-    }
-
-    for (i, j) in iproduct!(0..N, 0..N) {
-        for &(l, r, c) in occupations[i][j].iter() {
-            for t in l + 1..r {
-                assert!(container_occupations[t][i][j].is_none());
-                container_occupations[t][i][j] = Some(c);
-            }
-        }
-    }
-
     for i in 0..N {
         let mut l = 0;
         for (j, &r) in t_in[i].iter().enumerate() {
-            for t in l..r {
-                container_occupations[t][i][0] = Some(input.a[i][j]);
-            }
+            occupations[i][0].push((l, r, input.a[i][j]));
             l = r;
         }
     }
 
-    container_occupations
+    occupations
 }

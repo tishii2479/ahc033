@@ -2,7 +2,7 @@ use itertools::iproduct;
 
 use crate::def::*;
 use crate::helper::*;
-use crate::lower::optimize_lower_level;
+use crate::lower::*;
 use crate::util::*;
 
 pub struct Solver {
@@ -31,14 +31,15 @@ impl Solver {
             path_finder,
             score: 0,
         };
-        solver.score = solver.eval_schedules();
+        solver.score = solver.eval_schedules(input);
         solver
     }
 
-    pub fn solve(&mut self, iteration: usize) -> Vec<Vec<Move>> {
+    pub fn solve(&mut self, iteration: usize, input: &Input) -> Vec<Vec<Move>> {
         eprintln!("[start]  upper-level-score: {}", self.score);
 
         for _t in 0..iteration {
+            eprintln!("{}", _t);
             let p = rnd::nextf();
             let start_temp = if self.score > 1_000_000 {
                 10_000
@@ -54,33 +55,46 @@ impl Solver {
             // dbg!(self.score, threshold);
             let threshold = if self.score > 1_000_000 { 1_000 } else { 1 };
             if p < 0.2 {
-                // 1. 一つのスケジュールの時間を伸ばす・減らす
-                self.action_shift_one_time(threshold);
+                // 一つのスケジュールの時間を伸ばす・減らす
+                self.action_shift_one_time(threshold, input);
             } else if p < 0.6 {
                 // 一つのコンテナの置く位置を変更する
-                self.action_change_container_p(threshold);
+                self.action_change_container_p(threshold, input);
             } else if p < 0.8 {
-                // 3. 一つのジョブを移動する
-                self.action_move_one_job(threshold);
+                // 一つのジョブを移動する
+                self.action_move_one_job(threshold, input);
             } else if p < 0.9 {
-                // 4. クレーン間でジョブをスワップする
-                self.action_swap_job_between_cranes(threshold);
+                // クレーン間でジョブをスワップする
+                self.action_swap_job_between_cranes(threshold, input);
             } else {
-                // 5. クレーン内でジョブをスワップする
-                self.action_swap_job_in_crane(threshold);
+                // クレーン内でジョブをスワップする
+                self.action_swap_job_in_crane(threshold, input);
             }
-            // 2. 一時点のスケジュールを全てのクレーンで伸ばす
+            // 一時点のスケジュールを全てのクレーンで伸ばす
+            // コンテナを置く位置を入れ替える
         }
 
         eprintln!("[end]    upper-level-score: {}", self.score);
-        assert!(self.eval_schedules() < 1_000);
+        // assert!(self.eval_schedules() < 1_000input);
 
-        let container_occupations = create_container_occupations(&self.schedules);
-        let (crane_log, _) = optimize_lower_level(&self.schedules, &container_occupations);
+        let container_occupations = create_container_occupations(&self.schedules, input);
+        let (mut crane_log, _) = optimize_lower_level(&self.schedules, &container_occupations);
+        for ci in (0..N).rev() {
+            crane_log[ci].clear();
+            crane_log[ci].push((ci, 0));
+            find_path_for_crane(
+                ci,
+                &self.schedules,
+                &mut crane_log,
+                &container_occupations,
+                &mut self.path_finder,
+                true,
+            );
+        }
         to_moves(&crane_log, &self.schedules)
     }
 
-    fn action_swap_job_in_crane(&mut self, threshold: i64) {
+    fn action_swap_job_in_crane(&mut self, threshold: i64, input: &Input) {
         let ci = rnd::gen_index(N);
         if self.schedules[ci].len() < 2 {
             return;
@@ -97,7 +111,7 @@ impl Solver {
         (self.schedules[ci][si].job, self.schedules[ci][sj].job) =
             (self.schedules[ci][sj].job, self.schedules[ci][si].job);
 
-        let new_score = self.eval_schedules();
+        let new_score = self.eval_schedules(input);
         if new_score - self.score < threshold {
             self.score = new_score;
             // eprintln!("[{_t}] {} -> {}", self.score, new_score);
@@ -107,7 +121,7 @@ impl Solver {
         }
     }
 
-    fn action_swap_job_between_cranes(&mut self, threshold: i64) {
+    fn action_swap_job_between_cranes(&mut self, threshold: i64, input: &Input) {
         let (ci, cj) = (rnd::gen_index(N), rnd::gen_index(N));
         if ci == cj || self.schedules[ci].len() == 0 || self.schedules[cj].len() == 0 {
             return;
@@ -119,7 +133,7 @@ impl Solver {
         (self.schedules[ci][si].job, self.schedules[cj][sj].job) =
             (self.schedules[cj][sj].job, self.schedules[ci][si].job);
 
-        let new_score = self.eval_schedules();
+        let new_score = self.eval_schedules(input);
         if new_score - self.score < threshold {
             self.score = new_score;
             // eprintln!("[{_t}] {} -> {}", self.score, new_score);
@@ -129,7 +143,7 @@ impl Solver {
         }
     }
 
-    fn action_move_one_job(&mut self, threshold: i64) {
+    fn action_move_one_job(&mut self, threshold: i64, input: &Input) {
         let (ci, cj) = (rnd::gen_index(N), rnd::gen_index(N));
         if ci == cj || self.schedules[ci].len() == 0 {
             return;
@@ -141,7 +155,7 @@ impl Solver {
         let s = self.schedules[ci].remove(si);
         self.schedules[cj].insert(sj, s);
 
-        let new_score = self.eval_schedules();
+        let new_score = self.eval_schedules(input);
         if new_score - self.score < threshold {
             // eprintln!("[{_t}] {} -> {}", self.score, new_score);
             self.score = new_score;
@@ -151,7 +165,7 @@ impl Solver {
         }
     }
 
-    fn action_shift_one_time(&mut self, threshold: i64) {
+    fn action_shift_one_time(&mut self, threshold: i64, input: &Input) {
         let ci = rnd::gen_index(N);
         if self.schedules[ci].len() == 0 {
             return;
@@ -168,7 +182,7 @@ impl Solver {
                 s.end_t += d;
             }
         }
-        let new_score = self.eval_schedules();
+        let new_score = self.eval_schedules(input);
 
         if new_score - self.score < threshold {
             self.score = new_score;
@@ -178,7 +192,7 @@ impl Solver {
         }
     }
 
-    fn action_change_container_p(&mut self, threshold: i64) {
+    fn action_change_container_p(&mut self, threshold: i64, input: &Input) {
         let c = rnd::gen_index(N * N);
         let mut prev_p = None;
         let new_p = (rnd::gen_index(N), rnd::gen_range(1, N - 1));
@@ -199,7 +213,7 @@ impl Solver {
         }
         let Some(prev_p) = prev_p else { return };
 
-        let new_score = self.eval_schedules();
+        let new_score = self.eval_schedules(input);
         if new_score - self.score < threshold {
             // eprintln!("[{_t}] {} ->s {}", self.score, new_score);
             self.score = new_score;
@@ -220,7 +234,7 @@ impl Solver {
         }
     }
 
-    fn eval_schedules(&mut self) -> i64 {
+    fn eval_schedules(&mut self, input: &Input) -> i64 {
         let raw_score = (0..N)
             .filter(|&ci| self.schedules[ci].len() > 0)
             .map(|ci| self.schedules[ci].last().unwrap().end_t)
@@ -232,17 +246,25 @@ impl Solver {
             return raw_score + constraint_penalty * 1_000_000;
         }
 
-        let container_occupations = create_container_occupations(&self.schedules);
+        let container_occupations = create_container_occupations(&self.schedules, input);
+        for (i, j) in iproduct!(0..N, 0..N) {
+            eprintln!("({i}, {j}) = {:?}", container_occupations[i][j]);
+        }
         let container_occupation_penalty = self.eval_container_occupation(&container_occupations);
+        if container_occupation_penalty > 0 {
+            return raw_score
+                + constraint_penalty * 1_000_000 * container_occupation_penalty * 1_000;
+        }
 
         let schedule_feasibility_penalty = self.eval_schedule_feasibility(&container_occupations);
 
-        // dbg!(
-        //     raw_score,
-        //     constraint_penalty,
-        //     container_occupation_penalty,
-        //     schedule_feasibility_penalty
-        // );
+        eprintln!(
+            "{} {} {} {}",
+            raw_score,
+            constraint_penalty,
+            container_occupation_penalty,
+            schedule_feasibility_penalty
+        );
         raw_score
             + constraint_penalty * 1_000_000
             + container_occupation_penalty * 1_000
@@ -253,37 +275,21 @@ impl Solver {
         &mut self,
         container_occupations: &Vec<Vec<Vec<(usize, usize, usize)>>>,
     ) -> i64 {
-        let mut penalty = 0;
-        // クレーン0はチェックする必要がない
-        for ci in 1..N {
-            for s in self.schedules[ci].iter() {
-                // s.start_t + 1 -> s.end_tにs.job.from -> s.job.toへの経路が存在するかどうか
-                // 存在しない場合、衝突したコンテナの個数をペナルティとして加える
-                penalty += self.path_finder.find_path_easy(
-                    s.start_t + 1,
-                    s.end_t,
-                    s.job.from,
-                    s.job.to,
-                    container_occupations,
-                    false,
-                );
-            }
-        }
+        let (_, penalty) = optimize_lower_level(&self.schedules, &container_occupations);
         penalty as i64
     }
 
     fn eval_container_occupation(&self, occupations: &Vec<Vec<Vec<(usize, usize, usize)>>>) -> i64 {
         let mut penalty = 0;
-        for i in 0..N {
-            for j in 0..N {
-                for k1 in 0..occupations[i][j].len() {
-                    for k2 in k1 + 1..occupations[i][j].len() {
-                        let (l1, r1, _) = occupations[i][j][k1];
-                        let (l2, r2, _) = occupations[i][j][k2];
-                        let (l, r) = (l1.max(l2), r1.min(r2));
-                        if r > l {
-                            penalty += r - l;
-                        }
+        for (i, j) in iproduct!(0..N, 1..N) {
+            for k1 in 0..occupations[i][j].len() {
+                for k2 in k1 + 1..occupations[i][j].len() {
+                    let (l1, r1, _) = occupations[i][j][k1];
+                    let (l2, r2, _) = occupations[i][j][k2];
+                    let (l, r) = (l1.max(l2), r1.min(r2));
+                    if r > l {
+                        eprintln!("{} {} {} {} {} {} {} {}", i, j, l1, r1, l2, r2, r, l);
+                        penalty += r - l;
                     }
                 }
             }
