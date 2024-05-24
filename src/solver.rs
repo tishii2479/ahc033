@@ -101,17 +101,17 @@ impl Solver {
                 if self.action_move_container(threshold, input) {
                     cnt[2] += 1;
                 }
-            } else if p < 0.8 {
+            } else if p < 0.6 {
                 // コンテナを置く位置を入れ替える
                 if self.action_swap_container(threshold, input) {
                     cnt[3] += 1;
                 }
-            } else if p < 0.9 {
+            } else if p < 0.8 {
                 // 一つのジョブを移動する
                 if self.action_move_one_job(threshold, input) {
                     cnt[4] += 1;
                 }
-            } else if p < 0.95 {
+            } else if p < 0.9 {
                 // クレーン間でジョブをスワップする
                 if self.action_swap_job_between_cranes(threshold, input) {
                     cnt[5] += 1;
@@ -486,7 +486,7 @@ impl Solver {
         let mut mp = vec![(0, 0); self.jobs.len()];
         for i in 0..N {
             for (j, s) in self.schedules[i].iter().enumerate() {
-                mp[self.jobs[s.job_idx].idx] = (i, j);
+                mp[s.job_idx] = (i, j);
             }
         }
 
