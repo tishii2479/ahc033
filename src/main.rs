@@ -2,7 +2,7 @@ mod def;
 mod helper;
 mod lower;
 mod pretask;
-mod upper;
+mod solver;
 mod util;
 
 use proconio::input;
@@ -11,7 +11,7 @@ use crate::def::*;
 use crate::helper::*;
 use crate::lower::*;
 use crate::pretask::*;
-use crate::upper::*;
+use crate::solver::*;
 use crate::util::*;
 
 fn main() {
