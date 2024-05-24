@@ -35,12 +35,12 @@ impl Solver {
     pub fn new(jobs: Vec<Job>, input: &Input) -> Solver {
         let path_finder = PathFinder::new();
         let constraints = create_constraints(&jobs, input);
-        let mut assigned_jobs: Vec<Vec<Job>> = vec![vec![]; N];
+        let mut assigned_jobs: Vec<Vec<usize>> = vec![vec![]; N];
         for job in jobs.iter() {
-            assigned_jobs[rnd::gen_index(N)].push(job.clone());
+            assigned_jobs[rnd::gen_index(N)].push(job.idx);
             // assigned_jobs[0].push(job.clone());
         }
-        let schedules = jobs_to_schedules(assigned_jobs);
+        let schedules = jobs_to_schedules(&jobs, assigned_jobs);
 
         let mut solver = Solver {
             jobs,
@@ -98,12 +98,12 @@ impl Solver {
                 }
             } else if p < 0.6 {
                 // 一つのコンテナの置く位置を変更する
-                if self.action_change_container_p(threshold, input) {
+                if self.action_move_container(threshold, input) {
                     cnt[2] += 1;
                 }
             } else if p < 0.8 {
                 // コンテナを置く位置を入れ替える
-                if self.action_swap_container_p(threshold, input) {
+                if self.action_swap_container(threshold, input) {
                     cnt[3] += 1;
                 }
             } else if p < 0.9 {
@@ -130,8 +130,10 @@ impl Solver {
             eprintln!("{ci}: {:?}", self.schedules[ci]);
         }
 
-        let container_occupations = create_container_occupations(&self.schedules, input);
+        let container_occupations =
+            create_container_occupations(&self.jobs, &self.schedules, input);
         let (mut crane_log, _) = optimize_lower_level(
+            &self.jobs,
             &self.schedules,
             &container_occupations,
             &mut self.path_finder,
@@ -141,6 +143,7 @@ impl Solver {
             crane_log[ci].push((ci, 0));
             find_path_for_crane(
                 ci,
+                &self.jobs,
                 &self.schedules,
                 &mut crane_log,
                 &container_occupations,
@@ -150,46 +153,47 @@ impl Solver {
         to_moves(&crane_log, &self.schedules)
     }
 
-    fn action_swap_container_p(&mut self, threshold: i64, input: &Input) -> bool {
-        let (c1, c2) = (rnd::gen_index(N * N), rnd::gen_index(N * N));
-        let mut prev_p = None;
-        let new_p = (rnd::gen_index(N), rnd::gen_range(1, N - 1));
-        for i in 0..N {
-            for s in self.schedules[i].iter_mut() {
-                if s.job.c != c {
-                    continue;
-                }
-                if !s.job.is_out_job() {
-                    prev_p = Some(s.job.to);
-                    s.job.to = new_p;
-                }
-                if !s.job.is_in_job() {
-                    prev_p = Some(s.job.from);
-                    s.job.from = new_p;
-                }
-            }
-        }
+    fn action_swap_container(&mut self, threshold: i64, input: &Input) -> bool {
+        // let (c1, c2) = (rnd::gen_index(N * N), rnd::gen_index(N * N));
+        // let mut prev_p = None;
+        // let new_p = (rnd::gen_index(N), rnd::gen_range(1, N - 1));
+        // for i in 0..N {
+        //     for s in self.schedules[i].iter_mut() {
+        //         if self.jobs[s.job_idx].c != c {
+        //             continue;
+        //         }
+        //         if !self.jobs[s.job_idx].is_out_job() {
+        //             prev_p = Some(self.jobs[s.job_idx].to);
+        //             self.jobs[s.job_idx].to = new_p;
+        //         }
+        //         if !self.jobs[s.job_idx].is_in_job() {
+        //             prev_p = Some(self.jobs[s.job_idx].from);
+        //             self.jobs[s.job_idx].from = new_p;
+        //         }
+        //     }
+        // }
 
-        let new_score = self.eval_schedules(input);
-        let adopt = new_score.to_score() - self.score.to_score() < threshold;
-        if adopt {
-            self.score = new_score;
-        } else {
-            for i in 0..N {
-                for s in self.schedules[i].iter_mut() {
-                    if s.job.c != c {
-                        continue;
-                    }
-                    if !s.job.is_out_job() {
-                        s.job.to = prev_p;
-                    }
-                    if !s.job.is_in_job() {
-                        s.job.from = prev_p;
-                    }
-                }
-            }
-        }
-        adopt
+        // let new_score = self.eval_schedules(input);
+        // let adopt = new_score.to_score() - self.score.to_score() < threshold;
+        // if adopt {
+        //     self.score = new_score;
+        // } else {
+        //     for i in 0..N {
+        //         for s in self.schedules[i].iter_mut() {
+        //             if self.jobs[s.job_idx].c != c {
+        //                 continue;
+        //             }
+        //             if !self.jobs[s.job_idx].is_out_job() {
+        //                 self.jobs[s.job_idx].to = prev_p;
+        //             }
+        //             if !self.jobs[s.job_idx].is_in_job() {
+        //                 self.jobs[s.job_idx].from = prev_p;
+        //             }
+        //         }
+        //     }
+        // }
+        // adopt
+        false
     }
 
     fn action_swap_job_in_crane(&mut self, threshold: i64, input: &Input) -> bool {
@@ -206,8 +210,13 @@ impl Solver {
         if si == sj {
             return false;
         }
-        (self.schedules[ci][si].job, self.schedules[ci][sj].job) =
-            (self.schedules[ci][sj].job, self.schedules[ci][si].job);
+        (
+            self.schedules[ci][si].job_idx,
+            self.schedules[ci][sj].job_idx,
+        ) = (
+            self.schedules[ci][sj].job_idx,
+            self.schedules[ci][si].job_idx,
+        );
 
         let new_score = self.eval_schedules(input);
         let adopt = new_score.to_score() - self.score.to_score() < threshold;
@@ -215,8 +224,13 @@ impl Solver {
             // eprintln!("{:?} -> {:?}", self.score, new_score);
             self.score = new_score;
         } else {
-            (self.schedules[ci][si].job, self.schedules[ci][sj].job) =
-                (self.schedules[ci][sj].job, self.schedules[ci][si].job);
+            (
+                self.schedules[ci][si].job_idx,
+                self.schedules[ci][sj].job_idx,
+            ) = (
+                self.schedules[ci][sj].job_idx,
+                self.schedules[ci][si].job_idx,
+            );
         }
         adopt
     }
@@ -230,8 +244,13 @@ impl Solver {
             rnd::gen_index(self.schedules[ci].len()),
             rnd::gen_index(self.schedules[cj].len()),
         );
-        (self.schedules[ci][si].job, self.schedules[cj][sj].job) =
-            (self.schedules[cj][sj].job, self.schedules[ci][si].job);
+        (
+            self.schedules[ci][si].job_idx,
+            self.schedules[cj][sj].job_idx,
+        ) = (
+            self.schedules[cj][sj].job_idx,
+            self.schedules[ci][si].job_idx,
+        );
 
         let new_score = self.eval_schedules(input);
         let adopt = new_score.to_score() - self.score.to_score() < threshold;
@@ -239,8 +258,13 @@ impl Solver {
             // eprintln!("{:?} -> {:?}", self.score, new_score);
             self.score = new_score;
         } else {
-            (self.schedules[ci][si].job, self.schedules[cj][sj].job) =
-                (self.schedules[cj][sj].job, self.schedules[ci][si].job);
+            (
+                self.schedules[ci][si].job_idx,
+                self.schedules[cj][sj].job_idx,
+            ) = (
+                self.schedules[cj][sj].job_idx,
+                self.schedules[ci][si].job_idx,
+            );
         }
         adopt
     }
@@ -333,23 +357,21 @@ impl Solver {
         adopt
     }
 
-    fn action_change_container_p(&mut self, threshold: i64, input: &Input) -> bool {
+    fn action_move_container(&mut self, threshold: i64, input: &Input) -> bool {
         let c = rnd::gen_index(N * N);
         let mut prev_p = None;
         let new_p = (rnd::gen_index(N), rnd::gen_range(1, N - 1));
-        for i in 0..N {
-            for s in self.schedules[i].iter_mut() {
-                if s.job.c != c {
-                    continue;
-                }
-                if !s.job.is_out_job() {
-                    prev_p = Some(s.job.to);
-                    s.job.to = new_p;
-                }
-                if !s.job.is_in_job() {
-                    prev_p = Some(s.job.from);
-                    s.job.from = new_p;
-                }
+        for job in self.jobs.iter_mut() {
+            if job.c != c {
+                continue;
+            }
+            if !job.is_out_job() {
+                prev_p = Some(job.to);
+                job.to = new_p;
+            }
+            if !job.is_in_job() {
+                prev_p = Some(job.from);
+                job.from = new_p;
             }
         }
         let Some(prev_p) = prev_p else { return false };
@@ -360,17 +382,15 @@ impl Solver {
             // eprintln!("[{_t}] {} ->s {}", self.score, new_score);
             self.score = new_score;
         } else {
-            for i in 0..N {
-                for s in self.schedules[i].iter_mut() {
-                    if s.job.c != c {
-                        continue;
-                    }
-                    if !s.job.is_out_job() {
-                        s.job.to = prev_p;
-                    }
-                    if !s.job.is_in_job() {
-                        s.job.from = prev_p;
-                    }
+            for job in self.jobs.iter_mut() {
+                if job.c != c {
+                    continue;
+                }
+                if !job.is_out_job() {
+                    job.to = prev_p;
+                }
+                if !job.is_in_job() {
+                    job.from = prev_p;
                 }
             }
         }
@@ -394,7 +414,8 @@ impl Solver {
             };
         }
 
-        let container_occupations = create_container_occupations(&self.schedules, input);
+        let container_occupations =
+            create_container_occupations(&self.jobs, &self.schedules, input);
         let container_occupation_penalty = self.eval_container_occupation(&container_occupations);
         if container_occupation_penalty > 0 {
             return Score {
@@ -421,6 +442,7 @@ impl Solver {
         container_occupations: &Vec<Vec<Vec<(usize, usize, usize)>>>,
     ) -> i64 {
         let (_, penalty) = optimize_lower_level(
+            &self.jobs,
             &self.schedules,
             &container_occupations,
             &mut self.path_finder,
@@ -451,11 +473,11 @@ impl Solver {
         for i in 0..N {
             for j in 0..self.schedules[i].len() {
                 if j == 0 {
-                    constraints.push(Constraint::FirstJob(self.schedules[i][j].job.idx));
+                    constraints.push(Constraint::FirstJob(self.schedules[i][j].job_idx));
                 } else {
                     constraints.push(Constraint::Consecutive(
-                        self.schedules[i][j - 1].job.idx,
-                        self.schedules[i][j].job.idx,
+                        self.schedules[i][j - 1].job_idx,
+                        self.schedules[i][j].job_idx,
                     ));
                 }
             }
@@ -464,7 +486,7 @@ impl Solver {
         let mut mp = vec![(0, 0); self.jobs.len()];
         for i in 0..N {
             for (j, s) in self.schedules[i].iter().enumerate() {
-                mp[s.job.idx] = (i, j);
+                mp[self.jobs[s.job_idx].idx] = (i, j);
             }
         }
 
@@ -496,22 +518,23 @@ impl Solver {
                         &self.schedules[mp[prev_job_i].0][mp[prev_job_i].1],
                         &self.schedules[mp[next_job_i].0][mp[next_job_i].1],
                     );
-                    let interval = dist(prev_s.job.to, next_s.job.from) + 1;
+                    let interval =
+                        dist(self.jobs[prev_s.job_idx].to, self.jobs[next_s.job_idx].from) + 1;
                     if prev_s.end_t + interval > next_s.start_t {
                         penalty += prev_s.end_t + interval - next_s.start_t;
                     }
                 }
                 Constraint::FirstJob(job_i) => {
                     let s = &self.schedules[mp[job_i].0][mp[job_i].1];
-                    let interval = dist((mp[job_i].0, 0), s.job.from);
+                    let interval = dist((mp[job_i].0, 0), self.jobs[s.job_idx].from);
                     if s.start_t < interval {
                         penalty += interval - s.start_t;
                     }
                 }
                 Constraint::Job(job_i) => {
                     let s = &self.schedules[mp[job_i].0][mp[job_i].1];
-                    let interval = dist(s.job.from, s.job.to) + 2;
-                    assert_eq!(s.job.idx, job_i);
+                    let interval = dist(self.jobs[s.job_idx].from, self.jobs[s.job_idx].to) + 2;
+                    assert_eq!(self.jobs[s.job_idx].idx, job_i);
                     if s.start_t + interval > s.end_t {
                         penalty += s.start_t + interval - s.end_t;
                     }

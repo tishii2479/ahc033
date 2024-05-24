@@ -20,7 +20,7 @@ pub enum Constraint {
 pub struct Schedule {
     pub start_t: usize,
     pub end_t: usize,
-    pub job: Job,
+    pub job_idx: usize,
 }
 
 #[derive(Clone, Copy, Debug)]

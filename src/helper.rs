@@ -242,23 +242,25 @@ impl PathFinder {
     }
 }
 
-pub fn jobs_to_schedules(jobs: Vec<Vec<Job>>) -> Vec<Vec<Schedule>> {
+pub fn jobs_to_schedules(jobs: &Vec<Job>, assigned_jobs: Vec<Vec<usize>>) -> Vec<Vec<Schedule>> {
     let mut schedules = vec![vec![]; N];
-    for (ci, jobs_c) in jobs.into_iter().enumerate() {
+    for (ci, job_indices) in assigned_jobs.into_iter().enumerate() {
         let mut cur_pos: (usize, usize) = (ci, 0);
         let mut cur_t = 0;
-        for job in jobs_c {
-            cur_t += cur_pos.0.abs_diff(job.from.0) + cur_pos.1.abs_diff(job.from.1);
+        for job_idx in job_indices {
+            cur_t +=
+                cur_pos.0.abs_diff(jobs[job_idx].from.0) + cur_pos.1.abs_diff(jobs[job_idx].from.1);
             let start_t = cur_t;
             cur_t += 1; // P
-            cur_t += job.from.0.abs_diff(job.to.0) + job.from.1.abs_diff(job.to.1);
+            cur_t += jobs[job_idx].from.0.abs_diff(jobs[job_idx].to.0)
+                + jobs[job_idx].from.1.abs_diff(jobs[job_idx].to.1);
             let end_t = cur_t;
             cur_t += 1; // Q
-            cur_pos = job.to;
+            cur_pos = jobs[job_idx].to;
             schedules[ci].push(Schedule {
                 start_t,
                 end_t,
-                job,
+                job_idx,
             })
         }
     }
@@ -266,6 +268,7 @@ pub fn jobs_to_schedules(jobs: Vec<Vec<Job>>) -> Vec<Vec<Schedule>> {
 }
 
 pub fn create_container_occupations(
+    jobs: &Vec<Job>,
     schedules: &Vec<Vec<Schedule>>,
     input: &Input,
 ) -> Vec<Vec<Vec<(usize, usize, usize)>>> {
@@ -275,16 +278,16 @@ pub fn create_container_occupations(
 
     for ci in 0..N {
         for s in schedules[ci].iter() {
-            if s.job.is_in_job() {
-                let (i, j) = input.c_to_a_ij[s.job.c];
+            if jobs[s.job_idx].is_in_job() {
+                let (i, j) = input.c_to_a_ij[jobs[s.job_idx].c];
                 t_in[i][j] = s.start_t;
             } else {
-                container_time_range[s.job.c].1 = Some(s.start_t);
+                container_time_range[jobs[s.job_idx].c].1 = Some(s.start_t);
             }
 
-            if !s.job.is_out_job() {
-                container_time_range[s.job.c].0 = Some(s.end_t);
-                container_pos[s.job.c] = Some(s.job.to);
+            if !jobs[s.job_idx].is_out_job() {
+                container_time_range[jobs[s.job_idx].c].0 = Some(s.end_t);
+                container_pos[jobs[s.job_idx].c] = Some(jobs[s.job_idx].to);
             }
         }
     }
