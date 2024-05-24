@@ -40,7 +40,6 @@ impl Solver {
         let mut assigned_jobs: Vec<Vec<usize>> = vec![vec![]; N];
         for job in jobs.iter() {
             assigned_jobs[rnd::gen_index(N)].push(job.idx);
-            // assigned_jobs[0].push(job.idx);
         }
         let schedules = jobs_to_schedules(&jobs, assigned_jobs);
 
@@ -63,18 +62,36 @@ impl Solver {
             if _t % 1000 == 0 {
                 eprintln!("{:?}", cnt);
                 cnt = vec![0; 7];
-                eprintln!("[{:7}] {:?} {}", _t, self.score, self.score.to_score());
+                eprintln!(
+                    "[{:7}, {:.8}] {:?} {}",
+                    _t,
+                    time::elapsed_seconds(),
+                    self.score,
+                    self.score.to_score()
+                );
                 for ci in 0..N {
                     eprintln!("ci = {ci} ({})", self.schedules[ci].len());
+                    let mut cur_pos = (ci, 0);
+                    let mut last_t = 0;
                     for s in self.schedules[ci].iter() {
+                        eprint!(
+                            "(min = {}, cur = {}, d = {})",
+                            dist(cur_pos, self.jobs[s.job_idx].from),
+                            s.start_t - last_t,
+                            s.start_t - last_t - dist(cur_pos, self.jobs[s.job_idx].from)
+                        );
                         eprintln!(
-                            "  {:?} ({}, {}) {:?} {:?}",
+                            "  {:?} (min = {}, cur = {}, d = {}) {:?} {:?}",
                             s,
-                            dist(self.jobs[s.job_idx].from, self.jobs[s.job_idx].to),
+                            dist(self.jobs[s.job_idx].from, self.jobs[s.job_idx].to) + 1,
                             s.end_t - s.start_t,
+                            (s.end_t - s.start_t)
+                                - (dist(self.jobs[s.job_idx].from, self.jobs[s.job_idx].to) + 1),
                             self.jobs[s.job_idx].from,
                             self.jobs[s.job_idx].to
                         );
+                        last_t = s.end_t + 1;
+                        cur_pos = self.jobs[s.job_idx].to;
                     }
                 }
             }
@@ -233,6 +250,7 @@ impl Solver {
         if si == sj {
             return false;
         }
+        let cloned_s = self.schedules.clone();
         (
             self.schedules[ci][si].job_idx,
             self.schedules[ci][sj].job_idx,
@@ -248,13 +266,7 @@ impl Solver {
             // eprintln!("{:?} -> {:?}", self.score, new_score);
             self.score = new_score;
         } else {
-            (
-                self.schedules[ci][si].job_idx,
-                self.schedules[ci][sj].job_idx,
-            ) = (
-                self.schedules[ci][sj].job_idx,
-                self.schedules[ci][si].job_idx,
-            );
+            self.schedules = cloned_s;
         }
         adopt
     }
@@ -268,6 +280,7 @@ impl Solver {
             rnd::gen_index(self.schedules[ci].len()),
             rnd::gen_index(self.schedules[cj].len()),
         );
+        let cloned_s = self.schedules.clone();
         (
             self.schedules[ci][si].job_idx,
             self.schedules[cj][sj].job_idx,
@@ -283,13 +296,7 @@ impl Solver {
             // eprintln!("{:?} -> {:?}", self.score, new_score);
             self.score = new_score;
         } else {
-            (
-                self.schedules[ci][si].job_idx,
-                self.schedules[cj][sj].job_idx,
-            ) = (
-                self.schedules[cj][sj].job_idx,
-                self.schedules[ci][si].job_idx,
-            );
+            self.schedules = cloned_s;
         }
         adopt
     }
@@ -303,7 +310,17 @@ impl Solver {
             rnd::gen_index(self.schedules[ci].len()),
             rnd::gen_index(self.schedules[cj].len() + 1),
         );
+        let cloned_s = self.schedules.clone();
         let s = self.schedules[ci].remove(si);
+        // s.end_t = s.start_t + dist(self.jobs[s.job_idx].from, self.jobs[s.job_idx].to) + 1;
+        // if sj < self.schedules[cj].len() {
+        //     self.schedules[cj][sj].start_t = s.end_t
+        //         + dist(
+        //             self.jobs[s.job_idx].to,
+        //             self.jobs[self.schedules[cj][sj].job_idx].to,
+        //         )
+        //         + 1;
+        // }
         self.schedules[cj].insert(sj, s);
 
         let new_score = self.eval_schedules(input);
@@ -313,24 +330,24 @@ impl Solver {
             // eprintln!("{:?} -> {:?}", self.score, new_score);
             self.score = new_score;
         } else {
-            let s = self.schedules[cj].remove(sj);
-            self.schedules[ci].insert(si, s);
+            self.schedules = cloned_s;
         }
         adopt
     }
 
     fn action_shift_all_time(&mut self, threshold: i64, input: &Input) -> bool {
-        let d = if rnd::nextf() < 0.5 { 1 } else { !0 };
         let ci = rnd::gen_index(N);
         if self.schedules[ci].len() == 0 {
             return false;
         }
+        let d = if rnd::nextf() < 0.5 { 1 } else { !0 };
+        // let d = rnd::gen_range(0, 8) - 5;
         let t = if rnd::nextf() < 0.2 {
             rnd::gen_index(self.schedules[ci].last().unwrap().end_t)
         } else {
             self.schedules[ci][rnd::gen_index(self.schedules[ci].len())].start_t + 1
         };
-        let t = if d == 1 { t } else { t.max(1) }; // オーバーフロー対策
+        let t = if d < 1_000 { t } else { t.max(0 - d + 1) }; // オーバーフロー対策
         let cloned_s = self.schedules.clone();
         for i in 0..N {
             for s in self.schedules[i].iter_mut() {
@@ -367,7 +384,7 @@ impl Solver {
             self.schedules[ci][rnd::gen_index(self.schedules[ci].len())].start_t + 1
         };
         let t = if d < 1_000 { t } else { t.max(0 - d + 1) }; // オーバーフロー対策
-        let cloned_s = self.schedules[ci].clone();
+        let cloned_s = self.schedules.clone();
         for s in self.schedules[ci].iter_mut() {
             if s.start_t >= t {
                 assert!(s.start_t + d < 1000, "{} {} {}", s.start_t, d, t);
@@ -385,7 +402,7 @@ impl Solver {
             // eprintln!("{:?} -> {:?}", self.score, new_score);
             self.score = new_score;
         } else {
-            self.schedules[ci] = cloned_s;
+            self.schedules = cloned_s;
         }
         adopt
     }
@@ -481,6 +498,7 @@ impl Solver {
         &mut self,
         container_occupations: &Vec<Vec<Vec<(usize, usize, usize)>>>,
     ) -> i64 {
+        // return 0;
         let (_, penalty) = optimize_lower_level(
             &self.jobs,
             &self.schedules,
@@ -577,9 +595,9 @@ impl Solver {
                     if s.start_t + interval > s.end_t {
                         penalty += s.start_t + interval - s.end_t;
                     }
-                    // if s.start_t + interval + 5 < s.end_t {
-                    //     penalty += s.end_t - (s.start_t + interval + 5);
-                    // }
+                    if s.start_t + interval + 5 < s.end_t {
+                        penalty += s.end_t - (s.start_t + interval + 5);
+                    }
                 }
             }
         }
