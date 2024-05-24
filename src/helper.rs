@@ -194,15 +194,6 @@ impl PathFinder {
                     container_occupations,
                 );
                 let next = self.dp[t][i][j].1 + cost;
-                // if ci == 0 && t <= 5 {
-                //     eprintln!(
-                //         "[{t}] {:?} -> {:?} = {}, {}",
-                //         (i, j),
-                //         (ni, nj),
-                //         self.dp[t][i][j].1,
-                //         cost
-                //     );
-                // }
                 if self.dp[t + 1][ni][nj].0 != self.id || next < self.dp[t + 1][ni][nj].1 {
                     self.dp[t + 1][ni][nj] = (self.id, next, (i, j));
                 }
@@ -210,13 +201,12 @@ impl PathFinder {
         }
 
         // NOTE: 最後に拾う・落とすなどの操作をするため、時刻t+1に留まることができるか調べる必要がある？
-        assert_eq!(self.dp[end_t][to.0][to.1].0, self.id);
+        assert_eq!(
+            self.dp[end_t][to.0][to.1].0, self.id,
+            "{} {} {:?} {:?}",
+            start_t, end_t, from, to
+        );
         let path = self.restore_path(start_t, end_t, from, to);
-        // eprint!("{}, {} {}, {:?}", ci, start_t, end_t, from);
-        // for (dt, v) in path.iter().enumerate() {
-        //     eprint!(" -> ({:?} {:?})", v, self.dp[start_t + dt + 1][v.0][v.1].1);
-        // }
-        // eprintln!();
         (path, self.dp[end_t][to.0][to.1].1 as i64)
     }
 
