@@ -140,7 +140,6 @@ impl PathFinder {
             }
         }
 
-        // NOTE: 最後に拾う・落とすなどの操作をするため、時刻t+1に留まることができるか調べる必要がある？
         assert_eq!(
             self.dp[end_t][to.0][to.1].0, self.id,
             "{} {} {:?} {:?}",

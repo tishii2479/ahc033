@@ -8,6 +8,12 @@ pub const D: [(usize, usize); 5] = [(0, 0), (0, 1), (1, 0), (0, !0), (!0, 0)];
 pub const D_MOVE: [Move; 5] = [Move::Idle, Move::Right, Move::Down, Move::Left, Move::Up];
 
 #[derive(Clone, Copy, Debug)]
+pub enum Violation {
+    PickUp(usize),
+    Carry(usize),
+}
+
+#[derive(Clone, Copy, Debug)]
 pub enum Constraint {
     Start(usize, usize),
     End(usize, usize),

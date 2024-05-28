@@ -22,7 +22,7 @@ fn main() {
 
     let input = Input::new(a);
     let jobs = listup_jobs(&input);
-    let mut solver = Solver::new(jobs, &input);
-    let moves = solver.solve(&input);
+    let mut solver = Solver::new(jobs, input);
+    let moves = solver.solve();
     output_ans(&moves);
 }
