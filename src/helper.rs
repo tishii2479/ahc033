@@ -89,23 +89,10 @@ impl PathFinder {
         ) -> usize {
             let (ni, nj) = nv;
             let mut collide = 0;
-            if !over_container && !(nj == 0 && v == nv) {
+            if !over_container {
                 for &(l, r, _) in container_occupations[ni][nj].iter() {
                     if l < t && t <= r {
                         collide += 1;
-                    }
-                }
-            }
-            if nj == 0 && collide > 0 {
-                for cj in 0..N {
-                    if ci == cj {
-                        continue;
-                    }
-                    if t + 1 >= crane_log[cj].len() {
-                        continue;
-                    }
-                    if crane_log[cj][t] == nv && crane_log[cj][t + 1] == (ni, 1) {
-                        collide -= 1;
                     }
                 }
             }

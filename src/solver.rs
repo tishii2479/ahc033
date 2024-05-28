@@ -39,7 +39,8 @@ impl Solver {
         let constraints = create_constraints(&jobs, input);
         let mut assigned_jobs: Vec<Vec<usize>> = vec![vec![]; N];
         for job in jobs.iter() {
-            assigned_jobs[rnd::gen_index(N)].push(job.idx);
+            // assigned_jobs[rnd::gen_index(N)].push(job.idx);
+            assigned_jobs[0].push(job.idx);
         }
         let schedules = jobs_to_schedules(&jobs, assigned_jobs);
 
@@ -54,12 +55,13 @@ impl Solver {
         solver
     }
 
-    pub fn solve(&mut self, iteration: usize, input: &Input) -> Vec<Vec<Move>> {
+    pub fn solve(&mut self, input: &Input) -> Vec<Vec<Move>> {
         eprintln!("[start]  upper-level-score: {:?}", self.score);
 
         let mut cnt = vec![0; 7];
-        for _t in 0..iteration {
-            if _t % 1000 == 0 {
+        let mut _t = 0;
+        while time::elapsed_seconds() < TIME_LIMIT {
+            if _t % 1_000 == 0 {
                 eprintln!("{:?}", cnt);
                 cnt = vec![0; 7];
                 eprintln!(
@@ -131,7 +133,7 @@ impl Solver {
                 if self.action_move_one_job(threshold, input) {
                     cnt[4] += 1;
                 }
-            } else if p < 1. {
+            } else if p < 0.9 {
                 // クレーン間でジョブをスワップする
                 if self.action_swap_job_between_cranes(threshold, input) {
                     cnt[5] += 1;
@@ -277,16 +279,17 @@ impl Solver {
             return false;
         }
         let si = rnd::gen_index(self.schedules[ci].len());
-        let sj = {
-            let mut ret = self.schedules[cj].len() - 1;
-            for (j, s) in self.schedules[cj].iter().enumerate() {
-                if s.job_idx > self.schedules[ci][si].job_idx {
-                    ret = j - if j > 0 { rnd::gen_index(2) } else { 0 };
-                    break;
-                }
-            }
-            ret
-        };
+        let sj = rnd::gen_index(self.schedules[cj].len());
+        // let sj = {
+        //     let mut ret = self.schedules[cj].len() - 1;
+        //     for (j, s) in self.schedules[cj].iter().enumerate() {
+        //         if s.job_idx > self.schedules[ci][si].job_idx {
+        //             ret = j - if j > 0 { rnd::gen_index(2) } else { 0 };
+        //             break;
+        //         }
+        //     }
+        //     ret
+        // };
         let cloned_s = self.schedules.clone();
         (
             self.schedules[ci][si].job_idx,
@@ -314,16 +317,17 @@ impl Solver {
             return false;
         }
         let si = rnd::gen_index(self.schedules[ci].len());
-        let sj = {
-            let mut ret = self.schedules[cj].len();
-            for (j, s) in self.schedules[cj].iter().enumerate() {
-                if s.job_idx > self.schedules[ci][si].job_idx {
-                    ret = j;
-                    break;
-                }
-            }
-            ret
-        };
+        let sj = rnd::gen_index(self.schedules[cj].len() + 1);
+        // let sj = {
+        //     let mut ret = self.schedules[cj].len();
+        //     for (j, s) in self.schedules[cj].iter().enumerate() {
+        //         if s.job_idx > self.schedules[ci][si].job_idx {
+        //             ret = j;
+        //             break;
+        //         }
+        //     }
+        //     ret
+        // };
         let cloned_s = self.schedules.clone();
         let s = self.schedules[ci].remove(si);
         self.schedules[cj].insert(sj, s);

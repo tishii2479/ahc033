@@ -1,5 +1,6 @@
 use itertools::iproduct;
 
+pub const TIME_LIMIT: f64 = 2.9;
 pub const N: usize = 5;
 
 pub const MAX_T: usize = 1000;

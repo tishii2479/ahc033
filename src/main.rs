@@ -23,7 +23,6 @@ fn main() {
     let input = Input::new(a);
     let jobs = listup_jobs(&input);
     let mut solver = Solver::new(jobs, &input);
-    let iteration = 500_000;
-    let moves = solver.solve(iteration, &input);
+    let moves = solver.solve(&input);
     output_ans(&moves);
 }
