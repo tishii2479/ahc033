@@ -280,16 +280,6 @@ impl Solver {
         }
         let si = rnd::gen_index(self.schedules[ci].len());
         let sj = rnd::gen_index(self.schedules[cj].len());
-        // let sj = {
-        //     let mut ret = self.schedules[cj].len() - 1;
-        //     for (j, s) in self.schedules[cj].iter().enumerate() {
-        //         if s.job_idx > self.schedules[ci][si].job_idx {
-        //             ret = j - if j > 0 { rnd::gen_index(2) } else { 0 };
-        //             break;
-        //         }
-        //     }
-        //     ret
-        // };
         let cloned_s = self.schedules.clone();
         (
             self.schedules[ci][si].job_idx,
@@ -318,16 +308,6 @@ impl Solver {
         }
         let si = rnd::gen_index(self.schedules[ci].len());
         let sj = rnd::gen_index(self.schedules[cj].len() + 1);
-        // let sj = {
-        //     let mut ret = self.schedules[cj].len();
-        //     for (j, s) in self.schedules[cj].iter().enumerate() {
-        //         if s.job_idx > self.schedules[ci][si].job_idx {
-        //             ret = j;
-        //             break;
-        //         }
-        //     }
-        //     ret
-        // };
         let cloned_s = self.schedules.clone();
         let s = self.schedules[ci].remove(si);
         self.schedules[cj].insert(sj, s);
@@ -350,7 +330,6 @@ impl Solver {
             return false;
         }
         let d = if rnd::nextf() < 0.5 { 1 } else { !0 };
-        // let d = rnd::gen_range(0, 8) - 5;
         let t = if rnd::nextf() < 0.2 {
             rnd::gen_index(self.schedules[ci].last().unwrap().end_t)
         } else {
@@ -372,7 +351,6 @@ impl Solver {
         let score_diff = new_score.to_score() - self.score.to_score();
         let adopt = score_diff < threshold;
         if adopt {
-            // eprintln!("{:?} -> {:?}", self.score, new_score);
             self.score = new_score;
         } else {
             self.schedules = cloned_s;
@@ -386,7 +364,6 @@ impl Solver {
             return false;
         }
         let d = if rnd::nextf() < 0.5 { 1 } else { !0 };
-        // let d = rnd::gen_range(0, 8) - 5;
         let t = if rnd::nextf() < 0.2 {
             rnd::gen_index(self.schedules[ci].last().unwrap().end_t)
         } else {
@@ -408,7 +385,6 @@ impl Solver {
         let adopt = score_diff < threshold;
 
         if adopt {
-            // eprintln!("{:?} -> {:?}", self.score, new_score);
             self.score = new_score;
         } else {
             self.schedules = cloned_s;
