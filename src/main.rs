@@ -3,6 +3,7 @@ mod helper;
 mod lower;
 mod pretask;
 mod solver;
+mod solver2;
 mod util;
 
 use proconio::input;
@@ -11,6 +12,7 @@ use crate::def::*;
 use crate::helper::*;
 use crate::pretask::*;
 use crate::solver::*;
+use crate::solver2::*;
 use crate::util::*;
 
 fn main() {
@@ -22,7 +24,7 @@ fn main() {
 
     let input = Input::new(a);
     let jobs = listup_jobs(&input);
-    let mut solver = Solver::new(jobs, input);
-    let moves = solver.solve();
+    let mut solver = Solver2::new(input);
+    let moves = solver.solve(jobs);
     output_ans(&moves);
 }

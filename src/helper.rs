@@ -171,12 +171,12 @@ impl PathFinder {
     }
 }
 
-pub fn jobs_to_schedules(jobs: &Vec<Job>, assigned_jobs: Vec<Vec<usize>>) -> Vec<Vec<Schedule>> {
+pub fn jobs_to_schedules(jobs: &Vec<Job>, job_order: &Vec<Vec<usize>>) -> Vec<Vec<Schedule>> {
     let mut schedules = vec![vec![]; N];
-    for (ci, job_indices) in assigned_jobs.into_iter().enumerate() {
+    for (ci, job_indices) in job_order.into_iter().enumerate() {
         let mut cur_pos: (usize, usize) = (ci, 0);
         let mut cur_t = 0;
-        for job_idx in job_indices {
+        for &job_idx in job_indices.iter() {
             cur_t +=
                 cur_pos.0.abs_diff(jobs[job_idx].from.0) + cur_pos.1.abs_diff(jobs[job_idx].from.1);
             let start_t = cur_t;
