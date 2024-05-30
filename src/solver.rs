@@ -6,12 +6,24 @@ use crate::lower::*;
 use crate::util::*;
 
 #[allow(unused)]
+fn print_schedules(schedules: &Vec<Vec<Schedule>>) {
+    for (ci, v) in schedules.iter().enumerate() {
+        eprintln!("ci = {};", ci);
+        for s in v.iter() {
+            eprintln!("{:?}", s);
+        }
+        eprintln!();
+    }
+}
+
+#[allow(unused)]
 #[derive(Clone, Copy, Debug, Default)]
 struct Score {
     raw_score: i64,
     length_sum: i64,
     constraint_penalty: i64,
     container_occupation_penalty: i64,
+    violations: i64,
 }
 
 impl Score {
@@ -20,6 +32,11 @@ impl Score {
         self.raw_score
             + self.constraint_penalty * 1_000_000_000
             + self.container_occupation_penalty * 1_000_000
+    }
+
+    #[inline]
+    fn to_selection_score(&self) -> i64 {
+        self.to_score() + self.violations * 1_000
     }
 }
 
@@ -55,42 +72,56 @@ impl Solver {
             score: Score::default(),
         };
         state.score = state.eval(&input);
-        let mut solver = Solver {
+
+        Solver {
             states: vec![state],
             input,
-        };
-        solver
+        }
     }
 
     pub fn solve(&mut self) -> Vec<Vec<Move>> {
         let mut path_finder = PathFinder::new();
-
+        let mut best_score = usize::MAX;
         for _ in 0..1_000 {
             let mut new_states: Vec<State> = vec![];
             for state in self.states.iter() {
-                let mut state = state.clone();
+                for t in 0..4 {
+                    let mut state = state.clone();
 
-                // 上位問題の最適化
-                optimize_upper_level(&mut state, &self.input);
+                    // 上位問題の最適化
+                    if t != 0 {
+                        optimize_upper_level(&mut state, &self.input);
+                    }
 
-                // 下位問題の最適化
-                let (crane_log, violations) =
-                    optimize_lower_level(&state, &mut path_finder, &self.input);
-                // if violations.len() < best_score {
-                //     eprintln!("{:?} {:?}", state.score, violations);
-                //     eprintln!("{:?}", self.additional_constraints);
-                //     for ci in 0..N {
-                //         eprintln!("ci: {}", ci);
-                //         for s in self.schedules[ci].iter() {
-                //             eprintln!(" {:?}", s);
-                //         }
-                //     }
-                //     // best_score = violations.len();
-                // }
+                    // 下位問題の最適化
+                    let (crane_log, violations) =
+                        optimize_lower_level(&state, &mut path_finder, &self.input);
 
-                // 制約の更新
-                update_additional_constraints(&mut state, &violations);
-                state.score = state.eval(&self.input);
+                    // 制約の更新
+                    update_additional_constraints(&mut state, &violations);
+
+                    state.score = state.eval(&self.input);
+                    state.score.violations = violations.len() as i64;
+
+                    if violations.len() < best_score {
+                        eprintln!(
+                            "{:?} {} {:?}",
+                            state.score.to_score(),
+                            violations.len(),
+                            state.score
+                        );
+                        // print_schedules(&state.schedules);
+                        best_score = violations.len();
+                        // eprintln!("{:?}", &state.additional_constraints);
+                    }
+                    new_states.push(state);
+                }
+            }
+
+            new_states.sort_by_key(|s| s.score.to_selection_score());
+            self.states = new_states.into_iter().take(10).collect();
+            for i in 0..self.states.len() {
+                eprintln!("{i} {:?}", self.states[i].score);
             }
         }
 
@@ -110,14 +141,14 @@ fn update_additional_constraints(state: &mut State, violations: &Vec<Violation>)
             Violation::PickUp(job_idx) => {
                 if rnd::nextf() < 0.1 {
                     // self.jobs[*job_idx].from = (rnd::gen_index(N), rnd::gen_range(1, N - 1));
-                } else if rnd::nextf() < 0.2 {
+                } else if rnd::nextf() < 0.5 {
                     state.additional_constraints[*job_idx].0 += 1;
                 }
             }
             Violation::Carry(job_idx) => {
                 if rnd::nextf() < 0.1 {
                     // self.jobs[*job_idx].to = (rnd::gen_index(N), rnd::gen_range(1, N - 1));
-                } else if rnd::nextf() < 0.2 {
+                } else if rnd::nextf() < 0.5 {
                     state.additional_constraints[*job_idx].1 += 1;
                 }
             }
@@ -125,17 +156,18 @@ fn update_additional_constraints(state: &mut State, violations: &Vec<Violation>)
     }
 
     for ac in state.additional_constraints.iter_mut() {
-        if rnd::nextf() < 0.1 && ac.0 > 0 {
+        if rnd::nextf() < 0.01 && ac.0 > 0 {
             ac.0 -= 1;
         }
-        if rnd::nextf() < 0.1 && ac.1 > 0 {
+        if rnd::nextf() < 0.01 && ac.1 > 0 {
             ac.1 -= 1;
         }
     }
 }
 
 fn optimize_upper_level(state: &mut State, input: &Input) {
-    while state.score.to_score() > 1_000 {
+    let mut _t = 0;
+    while state.score.to_score() > 1_000 || _t < 1_000 {
         let p = rnd::nextf();
         let threshold = if state.score.to_score() > 1_000_000_000 {
             10_000_000
@@ -148,27 +180,28 @@ fn optimize_upper_level(state: &mut State, input: &Input) {
         };
 
         // 一時点のスケジュールを全てのクレーンで伸ばす
-        if p < 0.05 {
-            action_shift_all_time(state, threshold, input);
+        let _ = if p < 0.05 {
+            action_shift_all_time(state, threshold, input)
         } else if p < 0.1 {
             // 一つのスケジュールの時間を伸ばす・減らす
-            action_shift_one_time(state, threshold, input);
+            action_shift_one_time(state, threshold, input)
         } else if p < 0.3 {
             // 一つのコンテナの置く位置を変更する
-            action_move_container(state, threshold, input);
+            action_move_container(state, threshold, input)
         } else if p < 0.7 {
             // コンテナを置く位置を入れ替える
-            action_swap_container(state, threshold, input);
+            action_swap_container(state, threshold, input)
         } else if p < 0.8 {
             // 一つのジョブを移動する
-            action_move_one_job(state, threshold, input);
+            action_move_one_job(state, threshold, input)
         } else if p < 0.9 {
             // クレーン間でジョブをスワップする
-            action_swap_job_between_cranes(state, threshold, input);
+            action_swap_job_between_cranes(state, threshold, input)
         } else {
             // クレーン内でジョブをスワップする
-            action_swap_job_in_crane(state, threshold, input);
-        }
+            action_swap_job_in_crane(state, threshold, input)
+        };
+        _t += 1;
     }
 }
 
@@ -209,6 +242,7 @@ impl State {
                 length_sum,
                 constraint_penalty,
                 container_occupation_penalty: 0,
+                violations: 0,
             };
         }
 
@@ -221,6 +255,7 @@ impl State {
             length_sum,
             constraint_penalty,
             container_occupation_penalty,
+            violations: 0,
         }
     }
 
@@ -295,6 +330,9 @@ impl State {
                     let interval = dist(self.jobs[prev_job_i].to, self.jobs[next_job_i].from) + 1;
                     let interval = interval + self.additional_constraints[next_job_i].0;
                     if prev_s.end_t + interval > next_s.start_t {
+                        if self.additional_constraints[next_job_i].0 > 0 {
+                            // eprint!("{interval} ");
+                        }
                         penalty += prev_s.end_t + interval - next_s.start_t;
                     }
                 }
@@ -303,6 +341,9 @@ impl State {
                     let interval = dist((mp[job_i].0, 0), self.jobs[s.job_idx].from);
                     let interval = interval + self.additional_constraints[job_i].0;
                     if s.start_t < interval {
+                        if self.additional_constraints[job_i].0 > 0 {
+                            // eprint!("{interval} ");
+                        }
                         penalty += interval - s.start_t;
                     }
                 }
@@ -311,6 +352,9 @@ impl State {
                     let interval = dist(self.jobs[job_i].from, self.jobs[job_i].to) + 1;
                     let interval = interval + self.additional_constraints[job_i].1;
                     if s.start_t + interval > s.end_t {
+                        if self.additional_constraints[job_i].1 > 0 {
+                            // eprint!("{interval} ");
+                        }
                         penalty += (s.start_t + interval - s.end_t) * 100;
                     }
                 }
